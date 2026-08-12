@@ -1,0 +1,128 @@
+import AppKit
+import OSLog
+import SwiftUI
+import InstantTranslationCore
+import InstantTranslationFeature
+import InstantTranslationInfrastructure
+
+@MainActor
+public final class ApplicationContainer {
+    public let session: TranslationSession
+    public let preferencesStore: any PreferencesStoring
+    public let credentialStore: any CredentialStoring
+    public let statusBarController: StatusBarController
+    public let popoverController: TranslationPopoverController
+
+    private let shortcutRegistrar: GlobalShortcutRegistering
+    private let clipboardSource: any InputSource
+    private let logger = Logger(
+        subsystem: "com.instanttranslation.macos",
+        category: "application"
+    )
+
+    private init(
+        session: TranslationSession,
+        preferencesStore: any PreferencesStoring,
+        credentialStore: any CredentialStoring,
+        statusBarController: StatusBarController,
+        popoverController: TranslationPopoverController,
+        shortcutRegistrar: GlobalShortcutRegistering,
+        clipboardSource: any InputSource
+    ) {
+        self.session = session
+        self.preferencesStore = preferencesStore
+        self.credentialStore = credentialStore
+        self.statusBarController = statusBarController
+        self.popoverController = popoverController
+        self.shortcutRegistrar = shortcutRegistrar
+        self.clipboardSource = clipboardSource
+    }
+
+    public static func make() async -> ApplicationContainer {
+        let preferencesStore = UserDefaultsPreferencesStore()
+        let credentialStore = KeychainCredentialStore()
+        let transport = URLSessionHTTPTransport()
+        let google = GoogleTranslationProvider(transport: transport) {
+            try credentialStore.read(.googleAPIKey)
+        }
+        let llm = OpenAICompatibleProvider(transport: transport) { presetID in
+            let preferences = await preferencesStore.load()
+            guard let apiKey = try credentialStore.read(.llmAPIKey),
+                  !apiKey.isEmpty,
+                  !preferences.llmBaseURL.isEmpty,
+                  !preferences.llmModel.isEmpty
+            else {
+                return nil
+            }
+            let prompt = presetID == .general
+                ? preferences.generalPrompt
+                : preferences.technologyAndRnDPrompt
+            return LLMProviderConfiguration(
+                baseURL: preferences.llmBaseURL,
+                apiKey: apiKey,
+                model: preferences.llmModel,
+                systemPrompt: prompt
+            )
+        }
+        let preferences = await preferencesStore.load()
+        let coordinator = TranslationCoordinator(providers: [google, llm])
+        let session = TranslationSession(
+            coordinator: coordinator,
+            promptPresetID: preferences.defaultPromptPresetID
+        )
+        let content = NSHostingView(rootView: TranslationView(session: session))
+        let popover = TranslationPopoverController(contentView: content)
+        let shortcut = CarbonGlobalShortcutRegistrar()
+        let statusBar = StatusBarController(
+            popoverController: popover,
+            shortcutRegistrar: shortcut
+        )
+        let container = ApplicationContainer(
+            session: session,
+            preferencesStore: preferencesStore,
+            credentialStore: credentialStore,
+            statusBarController: statusBar,
+            popoverController: popover,
+            shortcutRegistrar: shortcut,
+            clipboardSource: ClipboardInputSource()
+        )
+        popover.onWillShow = { [weak container] in
+            container?.prepareClipboard()
+        }
+        return container
+    }
+
+    public func start() {
+        Task {
+            let preferences = await preferencesStore.load()
+            do {
+                try shortcutRegistrar.register(preferences.globalShortcut) {
+                    [weak statusBarController] in
+                    statusBarController?.toggleFromShortcut()
+                }
+            } catch {
+                logger.error("shortcut registration failed")
+            }
+        }
+    }
+
+    public func stop() {
+        shortcutRegistrar.unregister()
+        session.cancelAll()
+    }
+
+    private func prepareClipboard() {
+        Task {
+            let preferences = await preferencesStore.load()
+            guard preferences.translateClipboardOnOpen else { return }
+            do {
+                let text = try await clipboardSource.read()
+                session.applyClipboardDecision(
+                    ClipboardTextPolicy().evaluate(text?.value)
+                )
+            } catch {
+                logger.error("clipboard read failed")
+            }
+        }
+    }
+}
