@@ -1,0 +1,483 @@
+import XCTest
+import InstantTranslationCore
+import InstantTranslationFeature
+import InstantTranslationInfrastructure
+@testable import InstantTranslationApp
+
+@MainActor
+final class SettingsViewModelTests: XCTestCase {
+    func testLaunchAtLoginControllerReflectsAndMutatesInjectedMainAppService() throws {
+        let service = FakeLaunchAtLoginService()
+        let controller = LaunchAtLoginController(service: service)
+
+        XCTAssertFalse(controller.isEnabled)
+
+        try controller.setEnabled(true)
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertEqual(service.registerCallCount, 1)
+
+        try controller.setEnabled(false)
+        XCTAssertFalse(controller.isEnabled)
+        XCTAssertEqual(service.unregisterCallCount, 1)
+    }
+
+    func testSavesSecretsToCredentialStoreAndNotPreferences() async throws {
+        let preferences = MemoryPreferencesStore()
+        let credentials = MemoryCredentialStore()
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: credentials,
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        model.googleAPIKey = "google-secret"
+        model.llmAPIKey = "llm-secret"
+        model.llmBaseURL = "https://api.openai.com/v1"
+        model.llmModel = "gpt-5-mini"
+
+        try await model.save()
+
+        XCTAssertEqual(credentials.stored(.googleAPIKey), "google-secret")
+        XCTAssertEqual(credentials.stored(.llmAPIKey), "llm-secret")
+        let storedPreferences = await preferences.load()
+        let encodedPreferences = String(
+            data: try JSONEncoder().encode(storedPreferences),
+            encoding: .utf8
+        )
+        XCTAssertFalse(encodedPreferences?.contains("google-secret") ?? true)
+        XCTAssertFalse(encodedPreferences?.contains("llm-secret") ?? true)
+    }
+
+    func testRestoresEachPromptIndependently() async {
+        let model = await SettingsViewModel.make(
+            preferencesStore: MemoryPreferencesStore(),
+            credentialStore: MemoryCredentialStore(),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        model.generalPrompt = "changed general"
+        model.technologyAndRnDPrompt = "changed tech"
+
+        model.restoreGeneralPrompt()
+
+        XCTAssertEqual(model.generalPrompt, DefaultPrompts.general)
+        XCTAssertEqual(model.technologyAndRnDPrompt, "changed tech")
+
+        model.generalPrompt = "changed again"
+        model.restoreTechnologyAndRnDPrompt()
+
+        XCTAssertEqual(model.generalPrompt, "changed again")
+        XCTAssertEqual(model.technologyAndRnDPrompt, DefaultPrompts.technologyAndRnD)
+    }
+
+    func testMakeUsesActualLaunchStateInsteadOfStalePreference() async {
+        var stored = AppPreferences()
+        stored.launchAtLogin = false
+
+        let model = await makeModel(
+            preferences: MemoryPreferencesStore(stored),
+            launch: FakeLaunchAtLoginController(isEnabled: true)
+        )
+
+        XCTAssertTrue(model.launchAtLogin)
+    }
+
+    func testInvalidRemoteHTTPAndIncompleteLLMConfigurationFailBeforeMutation() async {
+        for invalidConfiguration in [
+            ("http://api.example.com/v1", "token", "model"),
+            ("https://api.example.com/v1", "token", ""),
+            ("https://api.example.com/v1", "", "model"),
+        ] {
+            let preferences = MemoryPreferencesStore()
+            let credentials = MemoryCredentialStore()
+            let launch = FakeLaunchAtLoginController()
+            let shortcut = FakeSettingsShortcutRegistrar()
+            let model = await makeModel(
+                preferences: preferences,
+                credentials: credentials,
+                launch: launch,
+                shortcut: shortcut
+            )
+            model.launchAtLogin = true
+            model.globalShortcut = Self.newShortcut
+            model.googleAPIKey = " google-secret "
+            model.llmBaseURL = invalidConfiguration.0
+            model.llmAPIKey = invalidConfiguration.1
+            model.llmModel = invalidConfiguration.2
+
+            do {
+                try await model.save()
+                XCTFail("Expected invalid configuration to fail")
+            } catch {
+                XCTAssertEqual(model.saveState, .failed)
+                XCTAssertFalse(String(describing: error).contains("google-secret"))
+                XCTAssertFalse(String(describing: error).contains(invalidConfiguration.0))
+            }
+
+            let saveCallCount = await preferences.saveCallCount
+            XCTAssertEqual(saveCallCount, 0)
+            XCTAssertTrue(credentials.operations.isEmpty)
+            XCTAssertTrue(launch.setValues.isEmpty)
+            XCTAssertTrue(shortcut.registerValues.isEmpty)
+        }
+    }
+
+    func testSaveTrimsConfigurationAndCoordinatesEveryConsumer() async throws {
+        let preferences = MemoryPreferencesStore()
+        let credentials = MemoryCredentialStore()
+        let launch = FakeLaunchAtLoginController()
+        let shortcut = FakeSettingsShortcutRegistrar()
+        let appearance = ProviderAppearance(llmBrand: .genericAI)
+        let session = TranslationSession(
+            coordinator: TranslationCoordinator(providers: []),
+            promptPresetID: .general
+        )
+        let model = await makeModel(
+            preferences: preferences,
+            credentials: credentials,
+            launch: launch,
+            shortcut: shortcut,
+            appearance: appearance,
+            session: session
+        )
+        model.launchAtLogin = true
+        model.globalShortcut = Self.newShortcut
+        model.translateClipboardOnOpen = true
+        model.googleAPIKey = " google-key "
+        model.llmBaseURL = " https://api.openai.com/v1/ "
+        model.llmAPIKey = " llm-key "
+        model.llmModel = " gpt-5-mini "
+        model.generalPrompt = " general prompt "
+        model.technologyAndRnDPrompt = " tech prompt "
+        model.defaultPromptPresetID = .technologyAndRnD
+
+        try await model.save()
+
+        let stored = await preferences.load()
+        XCTAssertTrue(stored.launchAtLogin)
+        XCTAssertEqual(stored.globalShortcut, Self.newShortcut)
+        XCTAssertTrue(stored.translateClipboardOnOpen)
+        XCTAssertEqual(stored.llmBaseURL, "https://api.openai.com/v1")
+        XCTAssertEqual(stored.llmModel, "gpt-5-mini")
+        XCTAssertEqual(stored.generalPrompt, "general prompt")
+        XCTAssertEqual(stored.technologyAndRnDPrompt, "tech prompt")
+        XCTAssertEqual(credentials.stored(.googleAPIKey), "google-key")
+        XCTAssertEqual(credentials.stored(.llmAPIKey), "llm-key")
+        XCTAssertTrue(launch.isEnabled)
+        XCTAssertEqual(shortcut.registeredShortcut, Self.newShortcut)
+        XCTAssertEqual(session.promptPresetID, .technologyAndRnD)
+        XCTAssertEqual(appearance.llmBrand, .openAI)
+        XCTAssertEqual(model.saveState, .saved)
+        XCTAssertNil(model.saveError)
+    }
+
+    func testAllowsHTTPForLoopbackLLMEndpoint() async throws {
+        let preferences = MemoryPreferencesStore()
+        let model = await makeModel(preferences: preferences)
+        model.llmBaseURL = " http://127.0.0.1:11434/v1/ "
+        model.llmAPIKey = " local-key "
+        model.llmModel = " local-model "
+
+        try await model.save()
+
+        let stored = await preferences.load()
+        XCTAssertEqual(stored.llmBaseURL, "http://127.0.0.1:11434/v1")
+    }
+
+    func testExplicitConnectionTestsCallOnlySelectedProviderAndNeverRunOnEditOrSave() async throws {
+        let tester = RecordingConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+        model.googleAPIKey = " google-key "
+        model.llmBaseURL = " https://api.example.com/v1 "
+        model.llmAPIKey = " llm-key "
+        model.llmModel = " model-name "
+        model.generalPrompt = " selected prompt "
+        model.defaultPromptPresetID = .general
+
+        try await model.save()
+        var googleKeys = await tester.googleKeys
+        var llmConfigurations = await tester.llmConfigurations
+        XCTAssertEqual(googleKeys.count, 0)
+        XCTAssertEqual(llmConfigurations.count, 0)
+
+        await model.testGoogleConnection()
+        googleKeys = await tester.googleKeys
+        llmConfigurations = await tester.llmConfigurations
+        XCTAssertEqual(googleKeys, ["google-key"])
+        XCTAssertEqual(llmConfigurations.count, 0)
+
+        await model.testLLMConnection()
+        googleKeys = await tester.googleKeys
+        llmConfigurations = await tester.llmConfigurations
+        let configuration = try XCTUnwrap(llmConfigurations.first)
+        XCTAssertEqual(googleKeys.count, 1)
+        XCTAssertEqual(configuration.baseURL, "https://api.example.com/v1")
+        XCTAssertEqual(configuration.apiKey, "llm-key")
+        XCTAssertEqual(configuration.model, "model-name")
+        XCTAssertEqual(configuration.systemPrompt, "selected prompt")
+    }
+
+    func testConnectionValidationDoesNotCallProvider() async {
+        let tester = RecordingConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+
+        await model.testGoogleConnection()
+        XCTAssertEqual(model.googleConnectionState, .failure(.unconfigured))
+        let googleKeys = await tester.googleKeys
+        XCTAssertEqual(googleKeys.count, 0)
+
+        model.llmBaseURL = "http://remote.example/v1"
+        model.llmAPIKey = "secret"
+        model.llmModel = "model"
+        await model.testLLMConnection()
+        XCTAssertEqual(model.llmConnectionState, .failure(.insecureEndpoint))
+        let llmConfigurations = await tester.llmConfigurations
+        XCTAssertEqual(llmConfigurations.count, 0)
+    }
+
+    func testStaleOverlappingConnectionCompletionCannotOverwriteNewestState() async {
+        let tester = ControlledConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+        model.googleAPIKey = "first"
+
+        let first = Task { await model.testGoogleConnection() }
+        await waitForGoogleCalls(1, tester: tester)
+        model.googleAPIKey = "second"
+        let second = Task { await model.testGoogleConnection() }
+        await waitForGoogleCalls(2, tester: tester)
+
+        await tester.completeGoogle(at: 1, with: .success)
+        await second.value
+        XCTAssertEqual(model.googleConnectionState, .success)
+
+        await tester.completeGoogle(at: 0, with: .failure(.timedOut))
+        await first.value
+        XCTAssertEqual(model.googleConnectionState, .success)
+    }
+
+    func testProviderConnectionTesterSendsOneFixedRequestPerExplicitCall() async throws {
+        let googleData = Data(#"{"data":{"translations":[{"translatedText":"测试"}]}}"#.utf8)
+        let llmData = Data(
+            #"{"choices":[{"message":{"content":"{\"translation\":\"测试\",\"rationale\":\"ok\"}"}}]}"#.utf8
+        )
+        let transport = RecordingHTTPTransport(responses: [
+            HTTPResponse(data: googleData, statusCode: 200),
+            HTTPResponse(data: llmData, statusCode: 200),
+        ])
+        let tester = ProviderConnectionTester(transport: transport)
+
+        let googleState = await tester.testGoogle(apiKey: "google-key")
+        let llmState = await tester.testLLM(configuration: .init(
+            baseURL: "https://api.example.com/v1",
+            apiKey: "llm-key",
+            model: "model",
+            systemPrompt: "prompt"
+        ))
+
+        XCTAssertEqual(googleState, .success)
+        XCTAssertEqual(llmState, .success)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "X-Goog-Api-Key"), "google-key")
+        XCTAssertNil(requests[0].value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(String(data: try XCTUnwrap(requests[0].httpBody), encoding: .utf8)?.contains("\"q\":\"test\"") == true)
+        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "Authorization"), "Bearer llm-key")
+        XCTAssertNil(requests[1].value(forHTTPHeaderField: "X-Goog-Api-Key"))
+        XCTAssertTrue(String(data: try XCTUnwrap(requests[1].httpBody), encoding: .utf8)?.contains("Text: test") == true)
+    }
+
+    func testShortcutFailureRestoresOldRuntimeAndLeavesPersistenceUnchanged() async {
+        let context = await makeFailureContext()
+        context.shortcut.failNextRegister(.beforeMutation)
+
+        await assertFailedSaveIsCompensated(context)
+
+        XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+        XCTAssertTrue(context.launch.setValues.isEmpty)
+    }
+
+    func testLaunchFailureAfterMutationRestoresShortcutAndLaunchState() async {
+        let context = await makeFailureContext()
+        context.launch.failNextSet(.afterMutation)
+
+        await assertFailedSaveIsCompensated(context)
+
+        XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+        XCTAssertFalse(context.launch.isEnabled)
+        XCTAssertEqual(context.launch.setValues, [true, false])
+    }
+
+    func testCredentialFailureRestoresEarlierCredentialAndRuntimeChanges() async {
+        let context = await makeFailureContext()
+        context.credentials.failNext(.write(.llmAPIKey), timing: .afterMutation)
+
+        await assertFailedSaveIsCompensated(context)
+
+        XCTAssertEqual(context.credentials.stored(.googleAPIKey), "old-google")
+        XCTAssertEqual(context.credentials.stored(.llmAPIKey), "old-llm")
+        XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+        XCTAssertFalse(context.launch.isEnabled)
+    }
+
+    func testPreferencesFailureAfterMutationRestoresAllPriorState() async {
+        let context = await makeFailureContext()
+        await context.preferences.failNextSave(.afterMutation)
+
+        await assertFailedSaveIsCompensated(context)
+
+        let stored = await context.preferences.load()
+        XCTAssertEqual(stored, context.oldPreferences)
+        XCTAssertEqual(context.credentials.stored(.googleAPIKey), "old-google")
+        XCTAssertEqual(context.credentials.stored(.llmAPIKey), "old-llm")
+        XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+        XCTAssertFalse(context.launch.isEnabled)
+        XCTAssertEqual(context.session.promptPresetID, .general)
+        XCTAssertEqual(context.appearance.llmBrand, .genericAI)
+    }
+
+    func testFailedRollbackReportsNeedsAttentionWithoutLeakingConfiguration() async {
+        let context = await makeFailureContext()
+        context.shortcut.failNextRegister(.beforeMutation)
+        context.shortcut.failNextRegister(.beforeMutation)
+
+        do {
+            try await context.model.save()
+            XCTFail("Expected save failure")
+        } catch {
+            XCTAssertEqual(context.model.saveState, .needsAttention)
+            let publicText = String(describing: error) + (context.model.saveError ?? "")
+            XCTAssertFalse(publicText.contains("new-google-secret"))
+            XCTAssertFalse(publicText.contains("private.example.com"))
+        }
+    }
+
+    private static let oldShortcut = KeyboardShortcut(keyCode: 0, carbonModifiers: 256)
+    private static let newShortcut = KeyboardShortcut(keyCode: 1, carbonModifiers: 512)
+
+    private func makeModel(
+        preferences: MemoryPreferencesStore = MemoryPreferencesStore(),
+        credentials: MemoryCredentialStore = MemoryCredentialStore(),
+        launch: FakeLaunchAtLoginController = FakeLaunchAtLoginController(),
+        shortcut: FakeSettingsShortcutRegistrar = FakeSettingsShortcutRegistrar(),
+        connectionTester: any ProviderConnectionTesting = RecordingConnectionTester(),
+        appearance: ProviderAppearance = ProviderAppearance(llmBrand: .genericAI),
+        session: TranslationSession? = nil
+    ) async -> SettingsViewModel {
+        await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: credentials,
+            launchAtLogin: launch,
+            shortcutRegistrar: shortcut,
+            shortcutAction: {},
+            connectionTester: connectionTester,
+            providerAppearance: appearance,
+            session: session
+        )
+    }
+
+    private struct FailureContext {
+        let model: SettingsViewModel
+        let preferences: MemoryPreferencesStore
+        let credentials: MemoryCredentialStore
+        let launch: FakeLaunchAtLoginController
+        let shortcut: FakeSettingsShortcutRegistrar
+        let appearance: ProviderAppearance
+        let session: TranslationSession
+        let oldPreferences: AppPreferences
+    }
+
+    private func makeFailureContext() async -> FailureContext {
+        var oldPreferences = AppPreferences()
+        oldPreferences.globalShortcut = Self.oldShortcut
+        oldPreferences.llmBaseURL = "https://old.example.com/v1"
+        oldPreferences.llmModel = "old-model"
+        oldPreferences.defaultPromptPresetID = .general
+        let preferences = MemoryPreferencesStore(oldPreferences)
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "old-google",
+            .llmAPIKey: "old-llm",
+        ])
+        let launch = FakeLaunchAtLoginController()
+        let shortcut = FakeSettingsShortcutRegistrar(registeredShortcut: Self.oldShortcut)
+        let appearance = ProviderAppearance(llmBrand: .genericAI)
+        let session = TranslationSession(
+            coordinator: TranslationCoordinator(providers: []),
+            promptPresetID: .general
+        )
+        let model = await makeModel(
+            preferences: preferences,
+            credentials: credentials,
+            launch: launch,
+            shortcut: shortcut,
+            appearance: appearance,
+            session: session
+        )
+        model.launchAtLogin = true
+        model.globalShortcut = Self.newShortcut
+        model.googleAPIKey = "new-google-secret"
+        model.llmBaseURL = "https://private.example.com/v1"
+        model.llmAPIKey = "new-llm-secret"
+        model.llmModel = "new-model"
+        model.defaultPromptPresetID = .technologyAndRnD
+        return FailureContext(
+            model: model,
+            preferences: preferences,
+            credentials: credentials,
+            launch: launch,
+            shortcut: shortcut,
+            appearance: appearance,
+            session: session,
+            oldPreferences: oldPreferences
+        )
+    }
+
+    private func assertFailedSaveIsCompensated(
+        _ context: FailureContext,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            try await context.model.save()
+            XCTFail("Expected save failure", file: file, line: line)
+        } catch {
+            XCTAssertEqual(context.model.saveState, .failed, file: file, line: line)
+            XCTAssertNotNil(context.model.saveError, file: file, line: line)
+        }
+        let storedPreferences = await context.preferences.load()
+        XCTAssertEqual(
+            storedPreferences,
+            context.oldPreferences,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            context.credentials.stored(.googleAPIKey),
+            "old-google",
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            context.credentials.stored(.llmAPIKey),
+            "old-llm",
+            file: file,
+            line: line
+        )
+    }
+
+    private func waitForGoogleCalls(
+        _ expected: Int,
+        tester: ControlledConnectionTester
+    ) async {
+        while await tester.googleCallCount() < expected {
+            await Task.yield()
+        }
+    }
+}
