@@ -10,6 +10,7 @@ public final class ApplicationContainer {
     public let session: TranslationSession
     public let preferencesStore: any PreferencesStoring
     public let credentialStore: any CredentialStoring
+    public let providerAppearance: ProviderAppearance
     public let statusBarController: StatusBarController
     public let popoverController: TranslationPopoverController
 
@@ -24,6 +25,7 @@ public final class ApplicationContainer {
         session: TranslationSession,
         preferencesStore: any PreferencesStoring,
         credentialStore: any CredentialStoring,
+        providerAppearance: ProviderAppearance,
         statusBarController: StatusBarController,
         popoverController: TranslationPopoverController,
         shortcutRegistrar: GlobalShortcutRegistering,
@@ -32,6 +34,7 @@ public final class ApplicationContainer {
         self.session = session
         self.preferencesStore = preferencesStore
         self.credentialStore = credentialStore
+        self.providerAppearance = providerAppearance
         self.statusBarController = statusBarController
         self.popoverController = popoverController
         self.shortcutRegistrar = shortcutRegistrar
@@ -70,10 +73,14 @@ public final class ApplicationContainer {
             coordinator: coordinator,
             promptPresetID: preferences.defaultPromptPresetID
         )
+        let appearance = ProviderAppearance(
+            llmBrand: ProviderBrandResolver.resolve(baseURL: preferences.llmBaseURL)
+        )
         let focusController = TranslationInputFocusController()
         let content = NSHostingView(
             rootView: TranslationView(
                 session: session,
+                appearance: appearance,
                 focusController: focusController
             )
         )
@@ -90,6 +97,7 @@ public final class ApplicationContainer {
             session: session,
             preferencesStore: preferencesStore,
             credentialStore: credentialStore,
+            providerAppearance: appearance,
             statusBarController: statusBar,
             popoverController: popover,
             shortcutRegistrar: shortcut,
