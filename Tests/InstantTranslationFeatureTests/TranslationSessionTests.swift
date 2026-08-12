@@ -75,6 +75,29 @@ final class TranslationSessionTests: XCTestCase {
         session.cancelAll()
     }
 
+    func testRetryRunsWhenCompletionIsIgnored() async throws {
+        let provider = GenerationControlledProvider(id: .google)
+        let session = makeSession(provider: provider)
+        session.submit(rawText: "compiler", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        let initialCallStarted = await eventually { await provider.callCount == 1 }
+        XCTAssertTrue(initialCallStarted)
+
+        session.retry(providerID: .google)
+        let retryStarted = await eventually { await provider.callCount == 2 }
+        XCTAssertTrue(retryStarted)
+        let retryRequestID = await provider.requestID(generation: 1)
+        XCTAssertEqual(retryRequestID, requestID)
+
+        await provider.complete(generation: 1, text: "ignored completion")
+        let retryPublished = await eventually {
+            session.states[.google]?.primaryText == "ignored completion"
+        }
+        XCTAssertTrue(retryPublished)
+
+        await stop(session: session, provider: provider)
+    }
+
     func testNewestRetryWinsWhenCancelledRetryReturnsLate() async throws {
         let provider = GenerationControlledProvider(id: .google)
         let session = makeSession(provider: provider)
@@ -95,11 +118,11 @@ final class TranslationSessionTests: XCTestCase {
         XCTAssertEqual(retryARequestID, requestID)
         XCTAssertEqual(retryBRequestID, requestID)
         await provider.complete(generation: 2, text: "retry B")
-        await retryB.value
+        await retryB.wait()
         XCTAssertEqual(session.states[.google]?.primaryText, "retry B")
 
         await provider.complete(generation: 1, text: "retry A")
-        await retryA.value
+        await retryA.wait()
 
         XCTAssertEqual(session.states[.google]?.primaryText, "retry B")
 
@@ -124,7 +147,7 @@ final class TranslationSessionTests: XCTestCase {
         XCTAssertTrue(newCallStarted)
 
         await provider.complete(generation: 1, text: "stale retry")
-        await oldRetry.value
+        await oldRetry.wait()
 
         XCTAssertEqual(session.states[.google], .loading(requestID: newID))
 
