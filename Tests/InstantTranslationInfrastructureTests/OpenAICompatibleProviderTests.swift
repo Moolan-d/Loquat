@@ -21,6 +21,44 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         )
     }
 
+    func testRejectsUnclosedMarkdownFences() {
+        let contents = [
+            "```json\n{\"translation\":\"compiler\"",
+            "```\ncompiler",
+            "````\ncompiler\n```",
+        ]
+
+        assertInvalidResponses(contents)
+    }
+
+    func testRejectsJSONShapedResponsesThatDoNotMatchExpectedObject() {
+        let contents = [
+            "```json\n{\"translation\":\"compiler\"\n```",
+            "```JSON\n{\"answer\":\"compiler\"}\n```",
+            "```json\ncompiler\n```",
+            "```json\n[\"compiler\"]\n```",
+            #"{"answer":"compiler"}"#,
+            #"{"translation":"compiler""#,
+            #"["compiler"]"#,
+            #"["compiler""#,
+            #""compiler""#,
+            "42",
+            "-0.5e+2",
+            "true",
+            "false",
+            "null",
+        ]
+
+        assertInvalidResponses(contents)
+    }
+
+    func testPlainTextBeginningWithUnmatchedQuoteStillUsesFirstLineFallback() throws {
+        XCTAssertEqual(
+            try LLMResponseParser.parse("\"compiler term\nAdditional prose"),
+            .init(translation: "\"compiler term", rationale: nil)
+        )
+    }
+
     func testDegradesPlainTextToFirstNonemptyLine() throws {
         XCTAssertEqual(
             try LLMResponseParser.parse(" \n compiler \nAdditional prose"),
@@ -49,11 +87,7 @@ final class OpenAICompatibleProviderTests: XCTestCase {
             #"{"translation":"compiler""#,
         ]
 
-        for content in contents {
-            XCTAssertThrowsError(try LLMResponseParser.parse(content)) { error in
-                XCTAssertEqual(error as? TranslationProviderError, .invalidResponse)
-            }
-        }
+        assertInvalidResponses(contents)
     }
 
     func testBuildsNonStreamingChatCompletionsRequestForSelectedPromptPreset() async throws {
@@ -280,6 +314,27 @@ final class OpenAICompatibleProviderTests: XCTestCase {
                 model: "model",
                 systemPrompt: DefaultPrompts.general
             )
+        }
+    }
+
+    private func assertInvalidResponses(
+        _ contents: [String],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for content in contents {
+            XCTAssertThrowsError(
+                try LLMResponseParser.parse(content),
+                file: file,
+                line: line
+            ) { error in
+                XCTAssertEqual(
+                    error as? TranslationProviderError,
+                    .invalidResponse,
+                    file: file,
+                    line: line
+                )
+            }
         }
     }
 }

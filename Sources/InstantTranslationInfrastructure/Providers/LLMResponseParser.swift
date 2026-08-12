@@ -15,11 +15,34 @@ public enum LLMResponseParser {
     public static func parse(_ content: String) throws -> ParsedLLMResponse {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         let unfenced: String
-        if trimmed.hasPrefix("```") && trimmed.hasSuffix("```") {
+        let requiresStructuredJSON: Bool
+        if trimmed.hasPrefix("```") {
             let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
+            let openingLine = lines.first ?? ""
+            let openingFenceLength = openingLine.prefix { $0 == "`" }.count
+            let fenceInfoText = openingLine.dropFirst(openingFenceLength)
+            let closingLine = lines.last?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let closingFenceLength = closingLine.prefix { $0 == "`" }.count
+            guard lines.count >= 2,
+                  openingFenceLength >= 3,
+                  !fenceInfoText.contains("`"),
+                  closingFenceLength >= openingFenceLength,
+                  closingFenceLength == closingLine.count
+            else {
+                throw TranslationProviderError.invalidResponse
+            }
+            let fenceInfo = fenceInfoText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(whereSeparator: { $0.isWhitespace })
+                .first?
+                .lowercased()
+            requiresStructuredJSON = fenceInfo == "json"
             unfenced = lines.dropFirst().dropLast().joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         } else {
             unfenced = trimmed
+            requiresStructuredJSON = false
         }
 
         // 响应按结构化 JSON、Markdown 围栏内 JSON、首个可用纯文本行的固定顺序降级。
@@ -36,7 +59,11 @@ public enum LLMResponseParser {
             )
         }
 
-        if unfenced.first == "{" || unfenced.first == "[" {
+        if requiresStructuredJSON
+            || isValidJSONDocument(unfenced)
+            || unfenced.first == "{"
+            || unfenced.first == "["
+        {
             throw TranslationProviderError.invalidResponse
         }
 
@@ -48,6 +75,13 @@ public enum LLMResponseParser {
             throw TranslationProviderError.invalidResponse
         }
         return ParsedLLMResponse(translation: firstLine, rationale: nil)
+    }
+
+    private static func isValidJSONDocument(_ content: String) -> Bool {
+        guard let data = content.data(using: .utf8) else {
+            return false
+        }
+        return (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) != nil
     }
 }
 
