@@ -4,12 +4,31 @@ import InstantTranslationCore
 public enum EndpointPolicy {
     public static func validatedAPIBaseURL(_ value: String) throws -> URL {
         guard var components = URLComponents(string: value),
-              let scheme = components.scheme?.lowercased(),
-              let host = components.host?.lowercased(),
               components.user == nil,
               components.password == nil,
               components.query == nil,
               components.fragment == nil
+        else {
+            throw TranslationProviderError.insecureEndpoint
+        }
+
+        // 只移除 URL 文本中真实的尾随斜杠，绝不解码路径，以保留 %2F 与 %2e%2e 的语义。
+        while components.percentEncodedPath.count > 1 && components.percentEncodedPath.hasSuffix("/") {
+            components.percentEncodedPath.removeLast()
+        }
+        guard let url = components.url else {
+            throw TranslationProviderError.insecureEndpoint
+        }
+        try validatedRequestURL(url)
+        return url
+    }
+
+    static func validatedRequestURL(_ url: URL) throws {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(),
+              components.user == nil,
+              components.password == nil
         else {
             throw TranslationProviderError.insecureEndpoint
         }
@@ -20,13 +39,5 @@ public enum EndpointPolicy {
         guard scheme == "https" || (scheme == "http" && loopback) else {
             throw TranslationProviderError.insecureEndpoint
         }
-
-        while components.path.count > 1 && components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        guard let url = components.url else {
-            throw TranslationProviderError.insecureEndpoint
-        }
-        return url
     }
 }

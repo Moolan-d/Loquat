@@ -1,4 +1,5 @@
 import Foundation
+import InstantTranslationCore
 import XCTest
 @testable import InstantTranslationInfrastructure
 
@@ -20,6 +21,30 @@ final class NetworkingSecurityTests: XCTestCase {
         XCTAssertThrowsError(try EndpointPolicy.validatedAPIBaseURL("https://user:pass@example.com/v1?key=secret"))
     }
 
+    func testEndpointPolicyPreservesEncodedPathDelimitersWhenNormalizingTrailingSlashes() throws {
+        let url = try EndpointPolicy.validatedAPIBaseURL("https://api.openai.com/v1%2Fmodels%2e%2e/")
+
+        XCTAssertEqual(url.absoluteString, "https://api.openai.com/v1%2Fmodels%2e%2e")
+    }
+
+    func testTransportRejectsInsecureInitialRequestAndRedirectTarget() async {
+        let insecureRequest = URLRequest(url: URL(string: "http://example.com/v1")!)
+        let secureRequest = URLRequest(url: URL(string: "https://api.openai.com/v1")!)
+        let transport = URLSessionHTTPTransport()
+
+        do {
+            _ = try await transport.send(insecureRequest)
+            XCTFail("Remote HTTP requests must be rejected before sending")
+        } catch let error as TranslationProviderError {
+            XCTAssertEqual(error, .insecureEndpoint)
+        } catch {
+            XCTFail("Expected insecureEndpoint, received \(error)")
+        }
+
+        XCTAssertFalse(URLSessionHTTPTransport.shouldFollowRedirect(to: insecureRequest))
+        XCTAssertTrue(URLSessionHTTPTransport.shouldFollowRedirect(to: secureRequest))
+    }
+
     func testDiagnosticEventCannotContainRequestTextOrCredentials() {
         let event = TranslationLogEvent(
             providerID: .llm,
@@ -31,6 +56,20 @@ final class NetworkingSecurityTests: XCTestCase {
         let description = event.description
         XCTAssertFalse(description.contains("Authorization"))
         XCTAssertFalse(description.contains("translation text"))
+    }
+
+    func testDiagnosticEventRedactsCustomProviderRawValue() {
+        let event = TranslationLogEvent(
+            providerID: ProviderID(rawValue: "Authorization: Bearer secret translation text"),
+            requestID: UUID(),
+            statusCode: nil,
+            durationMilliseconds: 80
+        )
+
+        XCTAssertTrue(event.description.contains("provider=unknown"))
+        XCTAssertFalse(event.description.contains("Authorization"))
+        XCTAssertFalse(event.description.contains("secret"))
+        XCTAssertFalse(event.description.contains("translation text"))
     }
 
     func testProviderErrorMapperCoversAuthenticationRateNetworkTimeoutAndCancellation() {

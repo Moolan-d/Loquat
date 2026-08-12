@@ -21,7 +21,18 @@ public struct TranslationLogEvent: CustomStringConvertible, Sendable {
     }
 
     public var description: String {
-        "provider=\(providerID.rawValue) request=\(requestID.uuidString) status=\(statusCode.map(String.init) ?? "none") durationMs=\(durationMilliseconds)"
+        "provider=\(diagnosticProvider) request=\(requestID.uuidString) status=\(statusCode.map(String.init) ?? "none") durationMs=\(durationMilliseconds)"
+    }
+
+    private var diagnosticProvider: String {
+        switch providerID {
+        case .google:
+            "google"
+        case .llm:
+            "llm"
+        default:
+            "unknown"
+        }
     }
 }
 
@@ -31,7 +42,7 @@ public struct TranslationLogger: Sendable {
     public init() {}
 
     public func record(_ event: TranslationLogEvent) {
-        // 日志只接收固定的匿名元数据事件，接口中没有原文或密钥字段，杜绝敏感内容被记录。
+        // 日志只接收固定的匿名元数据事件，未知 ProviderID 也映射为常量，绝不把原文或密钥写入日志。
         logger.info("\(event.description, privacy: .public)")
     }
 }
