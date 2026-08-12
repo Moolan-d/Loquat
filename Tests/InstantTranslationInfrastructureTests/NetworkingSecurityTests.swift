@@ -45,6 +45,50 @@ final class NetworkingSecurityTests: XCTestCase {
         XCTAssertTrue(URLSessionHTTPTransport.shouldFollowRedirect(to: secureRequest))
     }
 
+    func testTransportRejectsSensitiveHeadersOnCrossOriginRedirects() {
+        let sourceURL = URL(string: "https://translation.googleapis.com/language/translate/v2")!
+        let crossOriginURLs = [
+            URL(string: "https://credential-stealer.example/translate")!,
+            URL(string: "https://translation.googleapis.com:8443/translate")!,
+            URL(string: "http://127.0.0.1:8080/translate")!,
+        ]
+        let sensitiveHeaders = [
+            "Authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "X-Goog-Api-Key",
+            "X-Api-Key",
+            "Api-Key",
+        ]
+
+        for targetURL in crossOriginURLs {
+            for header in sensitiveHeaders {
+                var redirect = URLRequest(url: targetURL)
+                redirect.setValue("secret", forHTTPHeaderField: header)
+
+                XCTAssertNil(
+                    URLSessionHTTPTransport.redirectRequest(from: sourceURL, to: redirect),
+                    "Cross-origin redirect retained \(header) for \(targetURL)"
+                )
+            }
+        }
+    }
+
+    func testTransportAllowsSameOriginHTTPSRedirectWithCredentialHeader() throws {
+        let sourceURL = URL(string: "https://translation.googleapis.com/language/translate/v2")!
+        var redirect = URLRequest(
+            url: URL(string: "https://translation.googleapis.com/language/translate/v2/alternate")!
+        )
+        redirect.setValue("google-secret", forHTTPHeaderField: "X-Goog-Api-Key")
+
+        let followed = try XCTUnwrap(
+            URLSessionHTTPTransport.redirectRequest(from: sourceURL, to: redirect)
+        )
+
+        XCTAssertEqual(followed.url, redirect.url)
+        XCTAssertEqual(followed.value(forHTTPHeaderField: "X-Goog-Api-Key"), "google-secret")
+    }
+
     func testDiagnosticEventCannotContainRequestTextOrCredentials() {
         let event = TranslationLogEvent(
             providerID: .llm,

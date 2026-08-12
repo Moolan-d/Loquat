@@ -58,6 +58,33 @@ public actor URLSessionHTTPTransport: HTTPTransport {
         }
         return (try? EndpointPolicy.validatedRequestURL(url)) != nil
     }
+
+    static func redirectRequest(from sourceURL: URL?, to request: URLRequest) -> URLRequest? {
+        guard shouldFollowRedirect(to: request),
+              let sourceURL,
+              let targetURL = request.url
+        else {
+            return nil
+        }
+        guard RequestOrigin(url: sourceURL) == RequestOrigin(url: targetURL)
+                || !containsSensitiveHeaders(request)
+        else {
+            return nil
+        }
+        return request
+    }
+
+    private static func containsSensitiveHeaders(_ request: URLRequest) -> Bool {
+        let fields = [
+            "Authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "X-Goog-Api-Key",
+            "X-Api-Key",
+            "Api-Key",
+        ]
+        return fields.contains { request.value(forHTTPHeaderField: $0) != nil }
+    }
 }
 
 private final class EndpointPolicyRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -68,7 +95,34 @@ private final class EndpointPolicyRedirectDelegate: NSObject, URLSessionTaskDele
         newRequest request: URLRequest,
         completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
-        // 重定向可能把 HTTPS 请求降级到 HTTP；每次跳转均重新执行与初始请求相同的安全策略。
-        completionHandler(URLSessionHTTPTransport.shouldFollowRedirect(to: request) ? request : nil)
+        // Foundation 是否保留认证 header 不能作为安全边界；scheme、host 或 port 改变且仍携密时直接拒绝。
+        completionHandler(URLSessionHTTPTransport.redirectRequest(from: response.url, to: request))
+    }
+}
+
+private struct RequestOrigin: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased()
+        else {
+            return nil
+        }
+        let defaultPort: Int
+        switch scheme {
+        case "https":
+            defaultPort = 443
+        case "http":
+            defaultPort = 80
+        default:
+            return nil
+        }
+        self.scheme = scheme
+        self.host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        port = components.port ?? defaultPort
     }
 }

@@ -16,7 +16,11 @@ public struct GoogleTranslationProvider: TranslationProvider {
     }
 
     public func translate(_ request: TranslationRequest) async throws -> TranslationResult {
-        guard let key = try await apiKey(), !key.isEmpty else {
+        guard let storedKey = try await apiKey() else {
+            throw TranslationProviderError.unconfigured
+        }
+        let key = storedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
             throw TranslationProviderError.unconfigured
         }
 
@@ -54,9 +58,11 @@ public struct GoogleTranslationProvider: TranslationProvider {
         } catch {
             throw TranslationProviderError.invalidResponse
         }
-        guard let translatedText = envelope.data.translations.first?.translatedText,
-              !translatedText.isEmpty
-        else {
+        guard let rawTranslatedText = envelope.data.translations.first?.translatedText else {
+            throw TranslationProviderError.invalidResponse
+        }
+        let translatedText = rawTranslatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !translatedText.isEmpty else {
             throw TranslationProviderError.invalidResponse
         }
 

@@ -38,9 +38,16 @@ final class GoogleTranslationProviderTests: XCTestCase {
     }
 
     func testMapsAuthenticationAndRateLimitFailures() async {
-        for (status, expected) in [(401, TranslationProviderError.invalidCredentials), (429, .rateLimited)] {
+        let cases: [(status: Int, expected: TranslationProviderError)] = [
+            (401, .invalidCredentials),
+            (403, .invalidCredentials),
+            (429, .rateLimited),
+        ]
+
+        for testCase in cases {
+            let transport = StubHTTPTransport(statusCode: testCase.status, body: "{}")
             let provider = GoogleTranslationProvider(
-                transport: StubHTTPTransport(statusCode: status, body: "{}"),
+                transport: transport,
                 apiKey: { "key" }
             )
 
@@ -48,22 +55,55 @@ final class GoogleTranslationProviderTests: XCTestCase {
                 _ = try await provider.translate(Self.request)
                 XCTFail("Expected provider error")
             } catch {
-                XCTAssertEqual(error as? TranslationProviderError, expected)
+                XCTAssertEqual(error as? TranslationProviderError, testCase.expected)
             }
+
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, 1)
         }
     }
 
-    func testMissingKeyIsUnconfigured() async {
-        let provider = GoogleTranslationProvider(
-            transport: StubHTTPTransport(statusCode: 200, body: "{}"),
-            apiKey: { nil }
-        )
+    func testMapsOfflineAndTimeoutFailuresWithoutRetrying() async {
+        let cases: [(code: URLError.Code, expected: TranslationProviderError)] = [
+            (.notConnectedToInternet, .networkUnavailable),
+            (.timedOut, .timedOut),
+        ]
 
-        do {
-            _ = try await provider.translate(Self.request)
-            XCTFail("Expected unconfigured")
-        } catch {
-            XCTAssertEqual(error as? TranslationProviderError, .unconfigured)
+        for testCase in cases {
+            let transport = StubHTTPTransport(error: URLError(testCase.code))
+            let provider = GoogleTranslationProvider(transport: transport, apiKey: { "key" })
+
+            do {
+                _ = try await provider.translate(Self.request)
+                XCTFail("Expected provider error")
+            } catch {
+                XCTAssertEqual(error as? TranslationProviderError, testCase.expected)
+            }
+
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, 1)
+        }
+    }
+
+    func testNilEmptyAndWhitespaceKeysAreUnconfiguredWithoutSending() async {
+        let keys: [String?] = [nil, "", " \n\t"]
+
+        for key in keys {
+            let transport = StubHTTPTransport(
+                statusCode: 200,
+                body: #"{"data":{"translations":[{"translatedText":"编译器"}]}}"#
+            )
+            let provider = GoogleTranslationProvider(transport: transport, apiKey: { key })
+
+            do {
+                _ = try await provider.translate(Self.request)
+                XCTFail("Expected unconfigured")
+            } catch {
+                XCTAssertEqual(error as? TranslationProviderError, .unconfigured)
+            }
+
+            let requests = await transport.requests
+            XCTAssertTrue(requests.isEmpty)
         }
     }
 
@@ -79,6 +119,38 @@ final class GoogleTranslationProviderTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? TranslationProviderError, .invalidResponse)
         }
+    }
+
+    func testWhitespaceOnlyTranslationIsRejected() async {
+        let provider = GoogleTranslationProvider(
+            transport: StubHTTPTransport(
+                statusCode: 200,
+                body: #"{"data":{"translations":[{"translatedText":" \n\t "}]}}"#
+            ),
+            apiKey: { "key" }
+        )
+
+        do {
+            _ = try await provider.translate(Self.request)
+            XCTFail("Expected invalid response")
+        } catch {
+            XCTAssertEqual(error as? TranslationProviderError, .invalidResponse)
+        }
+    }
+
+    func testTrimsTranslatedTextBeforeReturningIt() async throws {
+        let provider = GoogleTranslationProvider(
+            transport: StubHTTPTransport(
+                statusCode: 200,
+                body: #"{"data":{"translations":[{"translatedText":" \n编译器\t "}]}}"#
+            ),
+            apiKey: { "key" }
+        )
+
+        let result = try await provider.translate(Self.request)
+
+        XCTAssertEqual(result.primaryText, "编译器")
+        XCTAssertEqual(result.speakableText, "编译器")
     }
 
     private static let request = TranslationRequest(
