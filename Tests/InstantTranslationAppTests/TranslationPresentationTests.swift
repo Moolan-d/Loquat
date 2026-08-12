@@ -1,9 +1,46 @@
+import AppKit
 import XCTest
 import InstantTranslationCore
+import InstantTranslationInfrastructure
 @testable import InstantTranslationApp
 
 @MainActor
 final class TranslationPresentationTests: XCTestCase {
+    func testBundledProviderLogosResolveToDistinctTemplateSVGImages() throws {
+        let expectedFiles: [(ProviderBrand, String)] = [
+            (.googleTranslate, "googletranslate.svg"),
+            (.openAI, "openai.svg"),
+            (.deepSeek, "deepseek.svg"),
+            (.openRouter, "openrouter.svg"),
+        ]
+        var resolvedURLs = Set<URL>()
+
+        for (brand, expectedFile) in expectedFiles {
+            let logo = try XCTUnwrap(BundledProviderLogoLoader.logo(for: brand))
+
+            XCTAssertEqual(logo.resourceURL.lastPathComponent, expectedFile)
+            XCTAssertEqual(logo.resourceURL.pathExtension, "svg")
+            XCTAssertGreaterThan(logo.image.size.width, 0)
+            XCTAssertGreaterThan(logo.image.size.height, 0)
+            XCTAssertTrue(logo.image.isTemplate)
+            resolvedURLs.insert(logo.resourceURL.standardizedFileURL)
+        }
+
+        XCTAssertEqual(resolvedURLs.count, expectedFiles.count)
+        XCTAssertNil(BundledProviderLogoLoader.logo(for: .genericAI))
+    }
+
+    func testMissingBundledProviderLogoReturnsNilForSafeSymbolFallback() {
+        let bundleWithoutProviderLogos = Bundle(for: TranslationPresentationTests.self)
+
+        XCTAssertNil(
+            BundledProviderLogoLoader.logo(
+                for: .openAI,
+                bundle: bundleWithoutProviderLogos
+            )
+        )
+    }
+
     func testLLMCopyWritesPrimaryTranslationWithoutRationale() {
         let pasteboard = FakePasteboard()
         let controller = CopyController(pasteboard: pasteboard)
