@@ -24,11 +24,50 @@ public protocol CredentialStoring: Sendable {
     func delete(_ key: CredentialKey) throws
 }
 
+struct KeychainSecItemResult {
+    let status: OSStatus
+    let item: Any?
+}
+
+protocol KeychainSecItemClient {
+    func copyMatching(_ query: [String: Any]) -> KeychainSecItemResult
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
+    func add(_ attributes: [String: Any]) -> OSStatus
+    func delete(_ query: [String: Any]) -> OSStatus
+}
+
+private struct SystemKeychainSecItemClient: KeychainSecItemClient {
+    func copyMatching(_ query: [String: Any]) -> KeychainSecItemResult {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        return KeychainSecItemResult(status: status, item: item)
+    }
+
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+    }
+
+    func add(_ attributes: [String: Any]) -> OSStatus {
+        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
 public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendable {
     private let service: String
+    private let client: any KeychainSecItemClient
 
     public init(service: String = "com.instanttranslation.macos.credentials") {
         self.service = service
+        client = SystemKeychainSecItemClient()
+    }
+
+    init(service: String, client: any KeychainSecItemClient) {
+        self.service = service
+        self.client = client
     }
 
     public func read(_ key: CredentialKey) throws -> String? {
@@ -36,15 +75,19 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound {
+        let result = client.copyMatching(query)
+        if result.status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let data = item as? Data else {
-            throw KeychainError.status(status)
+        guard result.status == errSecSuccess else {
+            throw KeychainError.status(result.status)
         }
-        return String(data: data, encoding: .utf8)
+        guard let data = result.item as? Data,
+              let value = String(data: data, encoding: .utf8)
+        else {
+            throw KeychainError.invalidData
+        }
+        return value
     }
 
     public func write(_ value: String, for key: CredentialKey) throws {
@@ -53,7 +96,8 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
             // 仅在设备解锁时可访问，且不迁移到其他设备，降低 API 密钥暴露面。
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
-        let updateStatus = SecItemUpdate(baseQuery(key) as CFDictionary, attributes as CFDictionary)
+        let query = baseQuery(key)
+        let updateStatus = client.update(query, attributes: attributes)
         if updateStatus == errSecSuccess {
             return
         }
@@ -63,15 +107,23 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
 
         var item = baseQuery(key)
         attributes.forEach { item[$0.key] = $0.value }
-        // 先 update、仅在不存在时 add，避免预检与写入之间出现竞态。
-        let addStatus = SecItemAdd(item as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw KeychainError.status(addStatus)
+        let addStatus = client.add(item)
+        if addStatus == errSecSuccess {
+            return
         }
+        if addStatus == errSecDuplicateItem {
+            // 以 Keychain 单次原子操作为并发边界；若另一写入者抢先 add，则重试 update。
+            let retryStatus = client.update(query, attributes: attributes)
+            guard retryStatus == errSecSuccess else {
+                throw KeychainError.status(retryStatus)
+            }
+            return
+        }
+        throw KeychainError.status(addStatus)
     }
 
     public func delete(_ key: CredentialKey) throws {
-        let status = SecItemDelete(baseQuery(key) as CFDictionary)
+        let status = client.delete(baseQuery(key))
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.status(status)
         }
@@ -82,10 +134,13 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.account,
+            // macOS 非同步项目需显式使用 Data Protection Keychain，才能保证 accessibility 生效。
+            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 }
 
 public enum KeychainError: Error, Equatable, Sendable {
+    case invalidData
     case status(OSStatus)
 }
