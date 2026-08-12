@@ -83,10 +83,10 @@ final class TranslationSessionTests: XCTestCase {
         let initialCallStarted = await eventually { await provider.callCount == 1 }
         XCTAssertTrue(initialCallStarted)
 
-        session.retry(providerID: .google)
+        let retryA = try XCTUnwrap(session.retry(providerID: .google))
         let retryAStarted = await eventually { await provider.callCount == 2 }
         XCTAssertTrue(retryAStarted)
-        session.retry(providerID: .google)
+        let retryB = try XCTUnwrap(session.retry(providerID: .google))
         let retryBStarted = await eventually { await provider.callCount == 3 }
         XCTAssertTrue(retryBStarted)
 
@@ -95,15 +95,11 @@ final class TranslationSessionTests: XCTestCase {
         XCTAssertEqual(retryARequestID, requestID)
         XCTAssertEqual(retryBRequestID, requestID)
         await provider.complete(generation: 2, text: "retry B")
-        let retryBPublished = await eventually {
-            session.states[.google]?.primaryText == "retry B"
-        }
-        XCTAssertTrue(retryBPublished)
+        await retryB.value
+        XCTAssertEqual(session.states[.google]?.primaryText, "retry B")
 
         await provider.complete(generation: 1, text: "retry A")
-        let retryAFinished = await eventually { await provider.hasFinished(generation: 1) }
-        XCTAssertTrue(retryAFinished)
-        await drainMainActor()
+        await retryA.value
 
         XCTAssertEqual(session.states[.google]?.primaryText, "retry B")
 
@@ -117,7 +113,7 @@ final class TranslationSessionTests: XCTestCase {
         let oldID = try XCTUnwrap(session.activeRequest?.id)
         let initialCallStarted = await eventually { await provider.callCount == 1 }
         XCTAssertTrue(initialCallStarted)
-        session.retry(providerID: .google)
+        let oldRetry = try XCTUnwrap(session.retry(providerID: .google))
         let oldRetryStarted = await eventually { await provider.callCount == 2 }
         XCTAssertTrue(oldRetryStarted)
 
@@ -128,9 +124,7 @@ final class TranslationSessionTests: XCTestCase {
         XCTAssertTrue(newCallStarted)
 
         await provider.complete(generation: 1, text: "stale retry")
-        let oldRetryFinished = await eventually { await provider.hasFinished(generation: 1) }
-        XCTAssertTrue(oldRetryFinished)
-        await drainMainActor()
+        await oldRetry.value
 
         XCTAssertEqual(session.states[.google], .loading(requestID: newID))
 
@@ -194,12 +188,6 @@ final class TranslationSessionTests: XCTestCase {
         return await condition()
     }
 
-    private func drainMainActor() async {
-        for _ in 0..<10 {
-            await Task.yield()
-        }
-    }
-
     private func stop(
         session: TranslationSession,
         provider: GenerationControlledProvider
@@ -207,7 +195,6 @@ final class TranslationSessionTests: XCTestCase {
         session.cancelAll()
         await provider.releaseAll()
         _ = await eventually { await provider.allCallsFinished }
-        await drainMainActor()
     }
 
     private static func result(
@@ -347,10 +334,6 @@ private actor GenerationControlledProvider: TranslationProvider {
 
     func requestID(generation: Int) -> UUID? {
         requests[generation]?.id
-    }
-
-    func hasFinished(generation: Int) -> Bool {
-        finishedGenerations.contains(generation)
     }
 
     func complete(generation: Int, text: String) {

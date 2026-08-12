@@ -114,16 +114,19 @@ public final class TranslationSession {
         )
     }
 
-    public func retry(providerID: ProviderID) {
-        guard let request = activeRequest else { return }
+    @discardableResult
+    public func retry(providerID: ProviderID) -> Task<Void, Never>? {
+        guard let request = activeRequest else { return nil }
 
         retryTasks[providerID]?.cancel()
         states[providerID] = .loading(requestID: request.id)
-        retryTasks[providerID] = Task { [coordinator] in
+        let task = Task { [coordinator] in
             let event = await coordinator.retry(providerID: providerID, request: request)
             guard !Task.isCancelled else { return }
             receive(event)
         }
+        retryTasks[providerID] = task
+        return task
     }
 
     /// 仅在新请求或进程停止时取消会话；popover 关闭只隐藏界面，不应调用此方法。
