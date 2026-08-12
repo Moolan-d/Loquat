@@ -1,1 +1,6 @@
+.build/
+build/
+.swiftpm/
+.worktrees/
 .superpowers/
+.DS_Store
