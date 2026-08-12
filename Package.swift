@@ -6,12 +6,24 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "InstantTranslationCore", targets: ["InstantTranslationCore"]),
+        .library(
+            name: "InstantTranslationInfrastructure",
+            targets: ["InstantTranslationInfrastructure"]
+        ),
     ],
     targets: [
         .target(name: "InstantTranslationCore"),
         .testTarget(
             name: "InstantTranslationCoreTests",
             dependencies: ["InstantTranslationCore"]
+        ),
+        .target(
+            name: "InstantTranslationInfrastructure",
+            dependencies: ["InstantTranslationCore"]
+        ),
+        .testTarget(
+            name: "InstantTranslationInfrastructureTests",
+            dependencies: ["InstantTranslationInfrastructure", "InstantTranslationCore"]
         ),
     ],
     swiftLanguageModes: [.v6]
