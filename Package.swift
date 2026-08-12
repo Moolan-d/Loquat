@@ -10,6 +10,7 @@ let package = Package(
             name: "InstantTranslationInfrastructure",
             targets: ["InstantTranslationInfrastructure"]
         ),
+        .library(name: "InstantTranslationFeature", targets: ["InstantTranslationFeature"]),
     ],
     targets: [
         .target(name: "InstantTranslationCore"),
@@ -24,6 +25,14 @@ let package = Package(
         .testTarget(
             name: "InstantTranslationInfrastructureTests",
             dependencies: ["InstantTranslationInfrastructure", "InstantTranslationCore"]
+        ),
+        .target(
+            name: "InstantTranslationFeature",
+            dependencies: ["InstantTranslationCore", "InstantTranslationInfrastructure"]
+        ),
+        .testTarget(
+            name: "InstantTranslationFeatureTests",
+            dependencies: ["InstantTranslationFeature", "InstantTranslationCore"]
         ),
     ],
     swiftLanguageModes: [.v6]
