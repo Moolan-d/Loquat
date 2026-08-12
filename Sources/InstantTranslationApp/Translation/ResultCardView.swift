@@ -3,6 +3,10 @@ import InstantTranslationCore
 import InstantTranslationFeature
 import InstantTranslationInfrastructure
 
+enum TranslationPresentationStyle {
+    static let copyFailureColor = NSColor.systemRed
+}
+
 @MainActor
 public struct ResultCardView: View {
     private let providerID: ProviderID
@@ -33,7 +37,11 @@ public struct ResultCardView: View {
             case .loading:
                 HStack {
                     ProviderIconView(providerID: providerID, llmBrand: llmBrand)
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(
+                            TranslationAccessibility.loadingLabel(providerID: providerID)
+                        )
                     Spacer()
                 }
             case .success(let result):
@@ -54,6 +62,9 @@ public struct ResultCardView: View {
                         .accessibilityLabel(
                             TranslationAccessibility.copyLabel(providerID: providerID)
                         )
+                        .accessibilityValue(
+                            TranslationAccessibility.copyValue(copyAccessibilityState)
+                        )
                     }
                     Text(result.primaryText)
                         .textSelection(.enabled)
@@ -65,7 +76,12 @@ public struct ResultCardView: View {
                     if copyController.failedProviderID == providerID {
                         Text("Copy failed")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(
+                                Color(nsColor: TranslationPresentationStyle.copyFailureColor)
+                            )
+                            .accessibilityLabel(
+                                "\(TranslationAccessibility.copyLabel(providerID: providerID)) failed"
+                            )
                     }
                 }
             case .failure(_, let error):
@@ -77,6 +93,9 @@ public struct ResultCardView: View {
                     Spacer()
                     Button("Retry", action: retry)
                         .controlSize(.small)
+                        .accessibilityLabel(
+                            TranslationAccessibility.retryLabel(providerID: providerID)
+                        )
                 }
             }
         }
@@ -87,6 +106,34 @@ public struct ResultCardView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            TranslationAccessibility.cardLabel(
+                providerID: providerID,
+                state: cardAccessibilityState
+            )
+        )
+    }
+
+    private var cardAccessibilityState: TranslationCardAccessibilityState {
+        switch state {
+        case .idle:
+            .idle
+        case .loading:
+            .loading
+        case .success:
+            .success
+        case .failure:
+            .failure
+        }
+    }
+
+    private var copyAccessibilityState: TranslationCopyAccessibilityState {
+        TranslationAccessibility.copyFeedback(
+            providerID: providerID,
+            copiedProviderID: copyController.copiedProviderID,
+            failedProviderID: copyController.failedProviderID
+        )
     }
 
     private func message(for error: TranslationProviderError) -> String {

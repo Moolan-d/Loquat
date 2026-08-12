@@ -20,12 +20,24 @@ struct BundledProviderLogo {
 }
 
 @MainActor
-enum BundledProviderLogoLoader {
-    static func logo(
-        for brand: ProviderBrand,
-        bundle: Bundle = .module
-    ) -> BundledProviderLogo? {
-        guard let resource = resource(for: brand),
+final class BundledProviderLogoLoader {
+    static let shared = BundledProviderLogoLoader(bundle: .module)
+
+    private let bundle: Bundle
+    private var cachedLogos: [String: BundledProviderLogo] = [:]
+    private var missingBrands: Set<String> = []
+
+    init(bundle: Bundle) {
+        self.bundle = bundle
+    }
+
+    func logo(for brand: ProviderBrand) -> BundledProviderLogo? {
+        if let cached = cachedLogos[brand.rawValue] {
+            return cached
+        }
+        guard !missingBrands.contains(brand.rawValue) else { return nil }
+
+        guard let resource = Self.resource(for: brand),
               let resourceURL = bundle.url(
                   forResource: resource.filename,
                   withExtension: "svg",
@@ -35,11 +47,14 @@ enum BundledProviderLogoLoader {
               image.size.width > 0,
               image.size.height > 0
         else {
+            missingBrands.insert(brand.rawValue)
             return nil
         }
 
         image.isTemplate = true
-        return BundledProviderLogo(image: image, resourceURL: resourceURL)
+        let logo = BundledProviderLogo(image: image, resourceURL: resourceURL)
+        cachedLogos[brand.rawValue] = logo
+        return logo
     }
 
     private static func resource(
@@ -73,7 +88,7 @@ public struct ProviderIconView: View {
         let brand = providerID == .google ? ProviderBrand.googleTranslate : llmBrand
 
         Group {
-            if let logo = BundledProviderLogoLoader.logo(for: brand) {
+            if let logo = BundledProviderLogoLoader.shared.logo(for: brand) {
                 Image(nsImage: logo.image)
                     .resizable()
                     .scaledToFit()

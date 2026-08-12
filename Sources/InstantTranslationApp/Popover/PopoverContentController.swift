@@ -1,12 +1,38 @@
 import AppKit
 
 @MainActor
+private final class AppearanceAwareVisualEffectView: NSVisualEffectView {
+    var appearanceDidChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        appearanceDidChange?()
+    }
+}
+
+@MainActor
 public final class PopoverContentController: NSViewController {
-    public let materialView = NSVisualEffectView()
+    public let materialView: NSVisualEffectView
     // Swift 6 的 deinit 非隔离；通知 token 只在主线程安装，并在析构时一次性移除。
     nonisolated(unsafe) private var accessibilityObserver: NSObjectProtocol?
+    private let shouldReduceTransparency: @MainActor () -> Bool
 
-    public init(contentView: NSView) {
+    public convenience init(contentView: NSView) {
+        self.init(
+            contentView: contentView,
+            shouldReduceTransparency: {
+                NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            }
+        )
+    }
+
+    init(
+        contentView: NSView,
+        shouldReduceTransparency: @escaping @MainActor () -> Bool
+    ) {
+        let materialView = AppearanceAwareVisualEffectView()
+        self.materialView = materialView
+        self.shouldReduceTransparency = shouldReduceTransparency
         super.init(nibName: nil, bundle: nil)
         materialView.material = .popover
         materialView.blendingMode = .behindWindow
@@ -22,6 +48,9 @@ public final class PopoverContentController: NSViewController {
             contentView.bottomAnchor.constraint(equalTo: materialView.bottomAnchor),
         ])
         preferredContentSize = NSSize(width: 370, height: 430)
+        materialView.appearanceDidChange = { [weak self] in
+            self?.updateMaterial()
+        }
         startObservingAccessibilityDisplayOptions()
         updateMaterial()
     }
@@ -45,10 +74,14 @@ public final class PopoverContentController: NSViewController {
 
     private func updateMaterial() {
         materialView.wantsLayer = true
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+        if shouldReduceTransparency() {
             materialView.material = .windowBackground
             materialView.blendingMode = .withinWindow
-            materialView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            var resolvedBackground = NSColor.windowBackgroundColor.cgColor
+            materialView.effectiveAppearance.performAsCurrentDrawingAppearance {
+                resolvedBackground = NSColor.windowBackgroundColor.cgColor
+            }
+            materialView.layer?.backgroundColor = resolvedBackground
         } else {
             materialView.material = .popover
             materialView.blendingMode = .behindWindow

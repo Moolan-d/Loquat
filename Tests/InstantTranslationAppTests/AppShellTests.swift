@@ -15,6 +15,45 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(controller.contentController.materialView.material, .popover)
     }
 
+    func testReducedTransparencyBackgroundRefreshesAcrossEffectiveAppearanceChanges() throws {
+        let controller = PopoverContentController(
+            contentView: NSView(),
+            shouldReduceTransparency: { true }
+        )
+
+        controller.view.appearance = NSAppearance(named: .aqua)
+        controller.materialView.viewDidChangeEffectiveAppearance()
+        let light = try resolvedBackgroundColor(controller.materialView)
+
+        controller.view.appearance = NSAppearance(named: .darkAqua)
+        controller.materialView.viewDidChangeEffectiveAppearance()
+        let dark = try resolvedBackgroundColor(controller.materialView)
+
+        XCTAssertEqual(controller.materialView.material, .windowBackground)
+        XCTAssertEqual(controller.materialView.blendingMode, .withinWindow)
+        XCTAssertNotEqual(light.redComponent, dark.redComponent)
+    }
+
+    func testNormalTransparencyRemainsNativePopoverAndClearAcrossAppearanceChanges() throws {
+        let controller = PopoverContentController(
+            contentView: NSView(),
+            shouldReduceTransparency: { false }
+        )
+
+        controller.view.appearance = NSAppearance(named: .aqua)
+        controller.materialView.viewDidChangeEffectiveAppearance()
+        let light = try resolvedBackgroundColor(controller.materialView)
+
+        controller.view.appearance = NSAppearance(named: .darkAqua)
+        controller.materialView.viewDidChangeEffectiveAppearance()
+        let dark = try resolvedBackgroundColor(controller.materialView)
+
+        XCTAssertEqual(controller.materialView.material, .popover)
+        XCTAssertEqual(controller.materialView.blendingMode, .behindWindow)
+        XCTAssertEqual(light.alphaComponent, 0)
+        XCTAssertEqual(dark.alphaComponent, 0)
+    }
+
     func testPopoverDidShowFocusesDesignatedInputEveryTime() {
         let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 370, height: 430))
         let input = NSTextField(frame: NSRect(x: 10, y: 20, width: 200, height: 24))
@@ -79,6 +118,23 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(
             window.firstResponder === input || window.firstResponder === input.currentEditor(),
             "expected the designated input to be first responder",
+            file: file,
+            line: line
+        )
+    }
+
+    private func resolvedBackgroundColor(
+        _ materialView: NSVisualEffectView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> NSColor {
+        let color = try XCTUnwrap(
+            materialView.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)),
+            file: file,
+            line: line
+        )
+        return try XCTUnwrap(
+            color.usingColorSpace(.deviceRGB),
             file: file,
             line: line
         )
