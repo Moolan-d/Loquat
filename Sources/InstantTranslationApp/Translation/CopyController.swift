@@ -103,14 +103,14 @@ public final class CopyController {
     }
 }
 
-public enum TranslationCardAccessibilityState: Sendable {
+enum TranslationCardAccessibilityState: Sendable {
     case idle
     case loading
     case success
     case failure
 }
 
-public enum TranslationCopyAccessibilityState: Sendable {
+enum TranslationCopyAccessibilityState: Sendable {
     case idle
     case copied
     case failed
@@ -121,7 +121,7 @@ public enum TranslationAccessibility {
         "Copy \(providerName(providerID)) translation"
     }
 
-    public static func cardLabel(
+    static func cardLabel(
         providerID: ProviderID,
         state: TranslationCardAccessibilityState
     ) -> String {
@@ -138,15 +138,15 @@ public enum TranslationAccessibility {
         }
     }
 
-    public static func loadingLabel(providerID: ProviderID) -> String {
+    static func loadingLabel(providerID: ProviderID) -> String {
         "\(providerName(providerID)) translation loading"
     }
 
-    public static func retryLabel(providerID: ProviderID) -> String {
+    static func retryLabel(providerID: ProviderID) -> String {
         "Retry \(providerName(providerID)) translation"
     }
 
-    public static func copyFeedback(
+    static func copyFeedback(
         providerID: ProviderID,
         copiedProviderID: ProviderID?,
         failedProviderID: ProviderID?
@@ -160,7 +160,7 @@ public enum TranslationAccessibility {
         return .idle
     }
 
-    public static func copyValue(_ state: TranslationCopyAccessibilityState) -> String {
+    static func copyValue(_ state: TranslationCopyAccessibilityState) -> String {
         switch state {
         case .idle:
             ""
