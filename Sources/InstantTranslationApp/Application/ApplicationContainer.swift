@@ -70,8 +70,17 @@ public final class ApplicationContainer {
             coordinator: coordinator,
             promptPresetID: preferences.defaultPromptPresetID
         )
-        let content = NSHostingView(rootView: TranslationView(session: session))
-        let popover = TranslationPopoverController(contentView: content)
+        let focusController = TranslationInputFocusController()
+        let content = NSHostingView(
+            rootView: TranslationView(
+                session: session,
+                focusController: focusController
+            )
+        )
+        let popover = TranslationPopoverController(
+            contentView: content,
+            focusRequester: focusController
+        )
         let shortcut = CarbonGlobalShortcutRegistrar()
         let statusBar = StatusBarController(
             popoverController: popover,

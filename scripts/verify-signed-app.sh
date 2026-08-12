@@ -22,6 +22,16 @@ trap 'rm -f "$ENTITLEMENTS"' EXIT
 codesign --verify --deep --strict "$APP"
 codesign -d --entitlements :- --xml "$APP" >"$ENTITLEMENTS" 2>/dev/null
 
+SIGNATURE_DETAILS="$(codesign -dvv "$APP" 2>&1)"
+ACTUAL_TEAM="$(
+    awk -F= '/^TeamIdentifier=/{print substr($0, index($0, "=") + 1); exit}' \
+        <<<"$SIGNATURE_DETAILS"
+)"
+if [[ "$ACTUAL_TEAM" != "$TEAM" ]]; then
+    echo "error: actual signature TeamIdentifier is '$ACTUAL_TEAM'; expected '$TEAM'" >&2
+    exit 65
+fi
+
 EXPECTED="$TEAM.com.instanttranslation.macos"
 APPLICATION_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$ENTITLEMENTS")"
 TEAM_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$ENTITLEMENTS")"

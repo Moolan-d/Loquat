@@ -59,7 +59,6 @@ else
             "$PROFILE_PLIST" 2>/dev/null \
         || true
     )"
-    PROFILE_KEYCHAIN_GROUPS="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:keychain-access-groups' "$PROFILE_PLIST" 2>/dev/null || true)"
 
     if [[ "$PROFILE_TEAM" != "$DEVELOPMENT_TEAM" ]]; then
         echo "error: provisioning profile team '$PROFILE_TEAM' does not match DEVELOPMENT_TEAM '$DEVELOPMENT_TEAM'" >&2
@@ -69,10 +68,7 @@ else
         echo "error: provisioning profile application identifier '$PROFILE_APPLICATION_IDENTIFIER' does not match '$EXPECTED'" >&2
         exit 65
     fi
-    if [[ "$PROFILE_KEYCHAIN_GROUPS" != *"$EXPECTED"* ]]; then
-        echo "error: provisioning profile does not grant keychain access group '$EXPECTED'" >&2
-        exit 65
-    fi
+    "$ROOT/scripts/verify-profile-keychain-group.sh" "$PROFILE_PLIST" "$EXPECTED"
 
     ENTITLEMENTS="$ROOT/build/InstantTranslation.entitlements.plist"
     "$ROOT/scripts/materialize-entitlements.sh" "$DEVELOPMENT_TEAM" "$ENTITLEMENTS"
