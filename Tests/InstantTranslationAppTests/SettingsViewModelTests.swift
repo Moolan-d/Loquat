@@ -6,6 +6,225 @@ import InstantTranslationInfrastructure
 
 @MainActor
 final class SettingsViewModelTests: XCTestCase {
+    func testCredentialReadFailuresRemainUnavailableAndBlockSaveBeforeMutation() async {
+        let failingKeys: [[CredentialKey]] = [
+            [.googleAPIKey],
+            [.llmAPIKey],
+            [.googleAPIKey, .llmAPIKey],
+        ]
+
+        for keys in failingKeys {
+            let preferences = MemoryPreferencesStore()
+            let credentials = MemoryCredentialStore(values: [
+                .googleAPIKey: "existing-google-secret",
+                .llmAPIKey: "existing-llm-secret",
+            ])
+            keys.forEach(credentials.failNextRead)
+            let launch = FakeLaunchAtLoginController()
+            let shortcut = FakeSettingsShortcutRegistrar()
+
+            let model = await makeModel(
+                preferences: preferences,
+                credentials: credentials,
+                launch: launch,
+                shortcut: shortcut
+            )
+
+            XCTAssertEqual(model.credentialAccessState, .unavailable)
+            XCTAssertEqual(model.googleAPIKey, "")
+            XCTAssertEqual(model.llmAPIKey, "")
+            model.translateClipboardOnOpen = true
+
+            do {
+                try await model.save()
+                XCTFail("Expected unavailable credentials to block save")
+            } catch {
+                XCTAssertEqual(error as? SettingsSaveError, .credentialsUnavailable)
+                let publicText = String(describing: error) + (model.saveError ?? "")
+                XCTAssertFalse(publicText.contains("existing-google-secret"))
+                XCTAssertFalse(publicText.contains("existing-llm-secret"))
+            }
+
+            XCTAssertEqual(credentials.stored(.googleAPIKey), "existing-google-secret")
+            XCTAssertEqual(credentials.stored(.llmAPIKey), "existing-llm-secret")
+            XCTAssertTrue(credentials.operations.isEmpty)
+            let saveCallCount = await preferences.saveCallCount
+            XCTAssertEqual(saveCallCount, 0)
+            XCTAssertTrue(launch.setValues.isEmpty)
+            XCTAssertTrue(shortcut.registerValues.isEmpty)
+        }
+    }
+
+    func testExplicitCredentialReloadAtomicallyRestoresValuesAndAllowsSave() async throws {
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "restored-google",
+            .llmAPIKey: "restored-llm",
+        ])
+        credentials.failNextRead(.googleAPIKey)
+        credentials.failNextRead(.llmAPIKey)
+        let model = await makeModel(credentials: credentials)
+        XCTAssertEqual(model.credentialAccessState, .unavailable)
+
+        model.reloadCredentials()
+
+        XCTAssertEqual(model.credentialAccessState, .loaded)
+        XCTAssertEqual(model.googleAPIKey, "restored-google")
+        XCTAssertEqual(model.llmAPIKey, "restored-llm")
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmModel = "restored-model"
+        try await model.save()
+        XCTAssertEqual(model.saveState, .saved)
+    }
+
+    func testCredentialSnapshotReadFailureMarksUnavailableUntilExplicitReload() async {
+        let preferences = MemoryPreferencesStore()
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "stored-google",
+            .llmAPIKey: "stored-llm",
+        ])
+        let launch = FakeLaunchAtLoginController()
+        let shortcut = FakeSettingsShortcutRegistrar()
+        let model = await makeModel(
+            preferences: preferences,
+            credentials: credentials,
+            launch: launch,
+            shortcut: shortcut
+        )
+        credentials.failNextRead(.googleAPIKey)
+        model.translateClipboardOnOpen = true
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmModel = "stored-model"
+
+        do {
+            try await model.save()
+            XCTFail("Expected credential snapshot read to fail")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .credentialsUnavailable)
+        }
+
+        XCTAssertEqual(model.credentialAccessState, .unavailable)
+        XCTAssertTrue(credentials.operations.isEmpty)
+        let saveCallCount = await preferences.saveCallCount
+        XCTAssertEqual(saveCallCount, 0)
+        XCTAssertTrue(launch.setValues.isEmpty)
+        XCTAssertTrue(shortcut.registerValues.isEmpty)
+
+        model.reloadCredentials()
+
+        XCTAssertEqual(model.credentialAccessState, .loaded)
+        XCTAssertEqual(model.googleAPIKey, "stored-google")
+        XCTAssertEqual(model.llmAPIKey, "stored-llm")
+    }
+
+    func testOverlappingSaveIsRejectedWithoutStartingSecondTransaction() async throws {
+        let preferences = SuspendingPreferencesStore()
+        let credentials = MemoryCredentialStore()
+        let launch = FakeLaunchAtLoginController()
+        let shortcut = FakeSettingsShortcutRegistrar()
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: credentials,
+            launchAtLogin: launch,
+            shortcutRegistrar: shortcut,
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        model.launchAtLogin = true
+        model.globalShortcut = Self.newShortcut
+        model.googleAPIKey = "google"
+        await preferences.suspendNextLoad()
+
+        let firstSave = Task { try await model.save() }
+        await preferences.waitUntilLoadSuspends()
+        XCTAssertEqual(model.saveState, .saving)
+
+        do {
+            try await model.save()
+            XCTFail("Expected overlapping save to be rejected")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .saveInProgress)
+            XCTAssertEqual(model.saveState, .saving)
+        }
+
+        XCTAssertTrue(credentials.operations.isEmpty)
+        XCTAssertTrue(launch.setValues.isEmpty)
+        XCTAssertTrue(shortcut.registerValues.isEmpty)
+        await preferences.resumeLoad()
+        try await firstSave.value
+
+        let saveCallCount = await preferences.saveCallCount
+        XCTAssertEqual(saveCallCount, 1)
+        XCTAssertEqual(credentials.operations.count, 2)
+        XCTAssertEqual(launch.setValues, [true])
+        XCTAssertEqual(shortcut.registerValues, [Self.newShortcut])
+        XCTAssertEqual(model.saveState, .saved)
+        XCTAssertTrue(model.launchAtLogin)
+        XCTAssertEqual(model.globalShortcut, Self.newShortcut)
+        XCTAssertEqual(model.googleAPIKey, "google")
+        let stored = await preferences.stored()
+        XCTAssertTrue(stored.launchAtLogin)
+        XCTAssertEqual(stored.globalShortcut, Self.newShortcut)
+        XCTAssertEqual(credentials.stored(.googleAPIKey), "google")
+        XCTAssertTrue(launch.status.isRegistered)
+        XCTAssertEqual(shortcut.registeredShortcut, Self.newShortcut)
+    }
+
+    func testRejectedOverlappingSaveCannotOverrideFirstSaveRollbackState() async throws {
+        let oldPreferences = AppPreferences()
+        let preferences = SuspendingPreferencesStore(oldPreferences)
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "old-google",
+            .llmAPIKey: "old-llm",
+        ])
+        let launch = FakeLaunchAtLoginController()
+        let shortcut = FakeSettingsShortcutRegistrar()
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: credentials,
+            launchAtLogin: launch,
+            shortcutRegistrar: shortcut,
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        model.launchAtLogin = true
+        model.globalShortcut = Self.newShortcut
+        model.googleAPIKey = "new-google"
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmAPIKey = "new-llm"
+        model.llmModel = "new-model"
+        await preferences.suspendNextSave(failure: .afterMutation)
+
+        let firstSave = Task { try await model.save() }
+        await preferences.waitUntilSaveSuspends()
+        do {
+            try await model.save()
+            XCTFail("Expected overlapping save to be rejected")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .saveInProgress)
+            XCTAssertEqual(model.saveState, .saving)
+        }
+
+        await preferences.resumeSave()
+        do {
+            try await firstSave.value
+            XCTFail("Expected first save to fail")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .persistenceFailed)
+        }
+
+        XCTAssertEqual(model.saveState, .failed)
+        let storedPreferences = await preferences.stored()
+        XCTAssertEqual(storedPreferences, oldPreferences)
+        XCTAssertEqual(credentials.stored(.googleAPIKey), "old-google")
+        XCTAssertEqual(credentials.stored(.llmAPIKey), "old-llm")
+        XCTAssertFalse(launch.isEnabled)
+        XCTAssertNil(shortcut.registeredShortcut)
+    }
+
     func testLaunchAtLoginControllerReflectsAndMutatesInjectedMainAppService() throws {
         let service = FakeLaunchAtLoginService()
         let controller = LaunchAtLoginController(service: service)
@@ -19,6 +238,34 @@ final class SettingsViewModelTests: XCTestCase {
         try controller.setEnabled(false)
         XCTAssertFalse(controller.isEnabled)
         XCTAssertEqual(service.unregisterCallCount, 1)
+    }
+
+    func testLaunchAtLoginControllerUnregistersRequiresApprovalService() throws {
+        let service = FakeLaunchAtLoginService(status: .requiresApproval)
+        let controller = LaunchAtLoginController(service: service)
+
+        XCTAssertEqual(controller.status, .requiresApproval)
+
+        try controller.setEnabled(false)
+
+        XCTAssertEqual(service.status, .notRegistered)
+        XCTAssertEqual(service.unregisterCallCount, 1)
+    }
+
+    func testLaunchAtLoginControllerPreservesEveryServiceStatus() {
+        let statuses: [LaunchAtLoginStatus] = [
+            .notRegistered,
+            .enabled,
+            .requiresApproval,
+            .notFound,
+        ]
+
+        for status in statuses {
+            let controller = LaunchAtLoginController(
+                service: FakeLaunchAtLoginService(status: status)
+            )
+            XCTAssertEqual(controller.status, status)
+        }
     }
 
     func testSavesSecretsToCredentialStoreAndNotPreferences() async throws {
@@ -88,6 +335,19 @@ final class SettingsViewModelTests: XCTestCase {
         )
 
         XCTAssertTrue(model.launchAtLogin)
+    }
+
+    func testSettingsTreatsRequiresApprovalAsRegisteredAndCanDisableIt() async throws {
+        let launch = FakeLaunchAtLoginController(status: .requiresApproval)
+        let model = await makeModel(launch: launch)
+
+        XCTAssertTrue(model.launchAtLogin)
+
+        model.launchAtLogin = false
+        try await model.save()
+
+        XCTAssertEqual(launch.setValues, [false])
+        XCTAssertEqual(launch.status, .notRegistered)
     }
 
     func testInvalidRemoteHTTPAndIncompleteLLMConfigurationFailBeforeMutation() async {
@@ -243,6 +503,32 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(llmConfigurations.count, 0)
     }
 
+    func testLLMConnectionValidatesOnlyTheSelectedPrompt() async throws {
+        let cases: [(PromptPresetID, String, String, String)] = [
+            (.general, "general selected", "", "general selected"),
+            (.technologyAndRnD, "", "technology selected", "technology selected"),
+        ]
+
+        for (preset, general, technology, expectedPrompt) in cases {
+            let tester = RecordingConnectionTester()
+            let model = await makeModel(connectionTester: tester)
+            model.llmBaseURL = "https://api.example.com/v1"
+            model.llmAPIKey = "llm-key"
+            model.llmModel = "model"
+            model.generalPrompt = general
+            model.technologyAndRnDPrompt = technology
+            model.defaultPromptPresetID = preset
+
+            await model.testLLMConnection()
+
+            let configurations = await tester.llmConfigurations
+            let configuration = try XCTUnwrap(configurations.first)
+            XCTAssertEqual(configurations.count, 1)
+            XCTAssertEqual(configuration.systemPrompt, expectedPrompt)
+            XCTAssertEqual(model.llmConnectionState, .success)
+        }
+    }
+
     func testStaleOverlappingConnectionCompletionCannotOverwriteNewestState() async {
         let tester = ControlledConnectionTester()
         let model = await makeModel(connectionTester: tester)
@@ -261,6 +547,28 @@ final class SettingsViewModelTests: XCTestCase {
         await tester.completeGoogle(at: 0, with: .failure(.timedOut))
         await first.value
         XCTAssertEqual(model.googleConnectionState, .success)
+    }
+
+    func testStaleOverlappingLLMCompletionCannotOverwriteNewestState() async {
+        let tester = ControlledConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmAPIKey = "first"
+        model.llmModel = "model"
+
+        let first = Task { await model.testLLMConnection() }
+        await waitForLLMCalls(1, tester: tester)
+        model.llmAPIKey = "second"
+        let second = Task { await model.testLLMConnection() }
+        await waitForLLMCalls(2, tester: tester)
+
+        await tester.completeLLM(at: 1, with: .success)
+        await second.value
+        XCTAssertEqual(model.llmConnectionState, .success)
+
+        await tester.completeLLM(at: 0, with: .failure(.timedOut))
+        await first.value
+        XCTAssertEqual(model.llmConnectionState, .success)
     }
 
     func testProviderConnectionTesterSendsOneFixedRequestPerExplicitCall() async throws {
@@ -304,6 +612,35 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertTrue(context.launch.setValues.isEmpty)
     }
 
+    func testRollbackRestoresActualRuntimeShortcutWhenPreferencesHaveDrifted() async {
+        var oldPreferences = AppPreferences()
+        oldPreferences.globalShortcut = Self.oldShortcut
+        let preferences = MemoryPreferencesStore(oldPreferences)
+        let launch = FakeLaunchAtLoginController()
+        launch.failNextSet(.beforeMutation)
+        let shortcut = FakeSettingsShortcutRegistrar(
+            registeredShortcut: Self.driftedRuntimeShortcut
+        )
+        let model = await makeModel(
+            preferences: preferences,
+            launch: launch,
+            shortcut: shortcut
+        )
+        model.launchAtLogin = true
+        model.globalShortcut = Self.newShortcut
+
+        do {
+            try await model.save()
+            XCTFail("Expected launch-at-login failure")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .persistenceFailed)
+        }
+
+        XCTAssertEqual(shortcut.registeredShortcut, Self.driftedRuntimeShortcut)
+        let stored = await preferences.load()
+        XCTAssertEqual(stored.globalShortcut, Self.oldShortcut)
+    }
+
     func testLaunchFailureAfterMutationRestoresShortcutAndLaunchState() async {
         let context = await makeFailureContext()
         context.launch.failNextSet(.afterMutation)
@@ -325,6 +662,62 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(context.credentials.stored(.llmAPIKey), "old-llm")
         XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
         XCTAssertFalse(context.launch.isEnabled)
+    }
+
+    func testCredentialWriteAndDeleteFailuresBeforeAndAfterMutationRestoreAllDomains() async {
+        let keys: [CredentialKey] = [.googleAPIKey, .llmAPIKey]
+        let timings: [FakeFailureTiming] = [.beforeMutation, .afterMutation]
+
+        for key in keys {
+            for deletesCredential in [false, true] {
+                for timing in timings {
+                    let context = await makeFailureContext()
+                    let operation: CredentialOperation
+                    if deletesCredential {
+                        operation = .delete(key)
+                        if key == .googleAPIKey {
+                            context.model.googleAPIKey = ""
+                        } else if key == .llmAPIKey {
+                            context.model.llmBaseURL = ""
+                            context.model.llmAPIKey = ""
+                            context.model.llmModel = ""
+                        }
+                    } else {
+                        operation = .write(key)
+                    }
+                    context.credentials.failNext(operation, timing: timing)
+
+                    await assertFailedSaveIsCompensated(context)
+
+                    XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+                    XCTAssertFalse(context.launch.status.isRegistered)
+                }
+            }
+        }
+    }
+
+    func testCredentialRollbackFailureReportsNeedsAttentionWithoutLeakingSecrets() async {
+        let context = await makeFailureContext()
+        context.credentials.failNext(.write(.llmAPIKey), timing: .afterMutation)
+        context.credentials.failNext(.write(.llmAPIKey), timing: .beforeMutation)
+
+        do {
+            try await context.model.save()
+            XCTFail("Expected save failure")
+        } catch {
+            XCTAssertEqual(error as? SettingsSaveError, .rollbackIncomplete)
+            XCTAssertEqual(context.model.saveState, .needsAttention)
+            let publicText = String(describing: error) + (context.model.saveError ?? "")
+            XCTAssertFalse(publicText.contains("new-llm-secret"))
+            XCTAssertFalse(publicText.contains("private.example.com"))
+        }
+
+        let storedPreferences = await context.preferences.load()
+        XCTAssertEqual(storedPreferences, context.oldPreferences)
+        XCTAssertEqual(context.credentials.stored(.googleAPIKey), "old-google")
+        XCTAssertEqual(context.credentials.stored(.llmAPIKey), "new-llm-secret")
+        XCTAssertEqual(context.shortcut.registeredShortcut, Self.oldShortcut)
+        XCTAssertFalse(context.launch.status.isRegistered)
     }
 
     func testPreferencesFailureAfterMutationRestoresAllPriorState() async {
@@ -361,6 +754,10 @@ final class SettingsViewModelTests: XCTestCase {
 
     private static let oldShortcut = KeyboardShortcut(keyCode: 0, carbonModifiers: 256)
     private static let newShortcut = KeyboardShortcut(keyCode: 1, carbonModifiers: 512)
+    private static let driftedRuntimeShortcut = KeyboardShortcut(
+        keyCode: 2,
+        carbonModifiers: 768
+    )
 
     private func makeModel(
         preferences: MemoryPreferencesStore = MemoryPreferencesStore(),
@@ -477,6 +874,15 @@ final class SettingsViewModelTests: XCTestCase {
         tester: ControlledConnectionTester
     ) async {
         while await tester.googleCallCount() < expected {
+            await Task.yield()
+        }
+    }
+
+    private func waitForLLMCalls(
+        _ expected: Int,
+        tester: ControlledConnectionTester
+    ) async {
+        while await tester.llmCallCount() < expected {
             await Task.yield()
         }
     }

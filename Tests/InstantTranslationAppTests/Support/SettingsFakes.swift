@@ -57,6 +57,7 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [CredentialKey: String]
     private var failures: [Failure] = []
+    private var readFailures: [CredentialKey: Int] = [:]
     private var recordedOperations: [CredentialOperation] = []
 
     init(values: [CredentialKey: String] = [:]) {
@@ -64,7 +65,14 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     }
 
     func read(_ key: CredentialKey) throws -> String? {
-        lock.withLock { values[key] }
+        try lock.withLock {
+            let remaining = readFailures[key] ?? 0
+            if remaining > 0 {
+                readFailures[key] = remaining - 1
+                throw SettingsFakeError.injected
+            }
+            return values[key]
+        }
     }
 
     func write(_ value: String, for key: CredentialKey) throws {
@@ -114,6 +122,12 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
         }
     }
 
+    func failNextRead(_ key: CredentialKey) {
+        lock.withLock {
+            readFailures[key, default: 0] += 1
+        }
+    }
+
     private func consumeFailure(for operation: CredentialOperation) -> FakeFailureTiming? {
         guard let index = failures.firstIndex(where: { $0.operation == operation }) else {
             return nil
@@ -122,14 +136,96 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     }
 }
 
+actor SuspendingPreferencesStore: PreferencesStoring {
+    private var value: AppPreferences
+    private var suspendLoad = false
+    private var suspendSave = false
+    private var saveFailure: FakeFailureTiming?
+    private var loadContinuation: CheckedContinuation<Void, Never>?
+    private var saveContinuation: CheckedContinuation<Void, Never>?
+    private(set) var saveCallCount = 0
+
+    init(_ value: AppPreferences = AppPreferences()) {
+        self.value = value
+    }
+
+    func load() async -> AppPreferences {
+        if suspendLoad {
+            suspendLoad = false
+            await withCheckedContinuation { continuation in
+                loadContinuation = continuation
+            }
+        }
+        return value
+    }
+
+    func save(_ preferences: AppPreferences) async throws {
+        saveCallCount += 1
+        let failure = saveFailure
+        saveFailure = nil
+        if failure == .beforeMutation {
+            throw SettingsFakeError.injected
+        }
+        value = preferences
+        if suspendSave {
+            suspendSave = false
+            await withCheckedContinuation { continuation in
+                saveContinuation = continuation
+            }
+        }
+        if failure == .afterMutation {
+            throw SettingsFakeError.injected
+        }
+    }
+
+    func suspendNextLoad() {
+        suspendLoad = true
+    }
+
+    func suspendNextSave(failure: FakeFailureTiming? = nil) {
+        suspendSave = true
+        saveFailure = failure
+    }
+
+    func waitUntilLoadSuspends() async {
+        while loadContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilSaveSuspends() async {
+        while saveContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resumeLoad() {
+        loadContinuation?.resume()
+        loadContinuation = nil
+    }
+
+    func resumeSave() {
+        saveContinuation?.resume()
+        saveContinuation = nil
+    }
+
+    func stored() -> AppPreferences {
+        value
+    }
+}
+
 @MainActor
 final class FakeLaunchAtLoginController: LaunchAtLoginControlling {
-    var isEnabled: Bool
+    var status: LaunchAtLoginStatus
     private(set) var setValues: [Bool] = []
     private var failures: [FakeFailureTiming] = []
 
     init(isEnabled: Bool = false) {
-        self.isEnabled = isEnabled
+        status = isEnabled ? .enabled : .notRegistered
+    }
+
+    init(status: LaunchAtLoginStatus) {
+        self.status = status
     }
 
     func setEnabled(_ enabled: Bool) throws {
@@ -138,7 +234,7 @@ final class FakeLaunchAtLoginController: LaunchAtLoginControlling {
         if failure == .beforeMutation {
             throw SettingsFakeError.injected
         }
-        isEnabled = enabled
+        status = enabled ? .enabled : .notRegistered
         if failure == .afterMutation {
             throw SettingsFakeError.injected
         }
@@ -151,18 +247,22 @@ final class FakeLaunchAtLoginController: LaunchAtLoginControlling {
 
 @MainActor
 final class FakeLaunchAtLoginService: LaunchAtLoginServicing {
-    var isEnabled = false
+    var status: LaunchAtLoginStatus
     private(set) var registerCallCount = 0
     private(set) var unregisterCallCount = 0
 
+    init(status: LaunchAtLoginStatus = .notRegistered) {
+        self.status = status
+    }
+
     func register() {
         registerCallCount += 1
-        isEnabled = true
+        status = .enabled
     }
 
     func unregister() {
         unregisterCallCount += 1
-        isEnabled = false
+        status = .notRegistered
     }
 }
 
@@ -230,7 +330,9 @@ actor RecordingConnectionTester: ProviderConnectionTesting {
 
 actor ControlledConnectionTester: ProviderConnectionTesting {
     private var googleContinuations: [CheckedContinuation<ConnectionTestState, Never>?] = []
+    private var llmContinuations: [CheckedContinuation<ConnectionTestState, Never>?] = []
     private(set) var googleKeys: [String] = []
+    private(set) var llmConfigurations: [LLMProviderConfiguration] = []
 
     func testGoogle(apiKey: String) async -> ConnectionTestState {
         googleKeys.append(apiKey)
@@ -239,8 +341,11 @@ actor ControlledConnectionTester: ProviderConnectionTesting {
         }
     }
 
-    func testLLM(configuration: LLMProviderConfiguration) -> ConnectionTestState {
-        .success
+    func testLLM(configuration: LLMProviderConfiguration) async -> ConnectionTestState {
+        llmConfigurations.append(configuration)
+        return await withCheckedContinuation { continuation in
+            llmContinuations.append(continuation)
+        }
     }
 
     func googleCallCount() -> Int {
@@ -250,6 +355,15 @@ actor ControlledConnectionTester: ProviderConnectionTesting {
     func completeGoogle(at index: Int, with state: ConnectionTestState) {
         googleContinuations[index]?.resume(returning: state)
         googleContinuations[index] = nil
+    }
+
+    func llmCallCount() -> Int {
+        llmConfigurations.count
+    }
+
+    func completeLLM(at index: Int, with state: ConnectionTestState) {
+        llmContinuations[index]?.resume(returning: state)
+        llmContinuations[index] = nil
     }
 }
 

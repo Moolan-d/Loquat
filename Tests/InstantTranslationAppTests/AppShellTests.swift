@@ -142,10 +142,16 @@ final class AppShellTests: XCTestCase {
 }
 
 private final class FakeShortcutRegistrar: GlobalShortcutRegistering {
+    private(set) var registeredShortcut: KeyboardShortcut?
+
     func register(
         _ shortcut: KeyboardShortcut?,
         action: @escaping @MainActor () -> Void
-    ) throws {}
+    ) throws {
+        registeredShortcut = shortcut
+    }
 
-    func unregister() {}
+    func unregister() {
+        registeredShortcut = nil
+    }
 }

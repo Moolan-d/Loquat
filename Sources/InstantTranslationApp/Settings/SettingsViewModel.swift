@@ -60,10 +60,17 @@ public enum SettingsSaveState: Equatable, Sendable {
     case needsAttention
 }
 
+public enum CredentialAccessState: Equatable, Sendable {
+    case loaded
+    case unavailable
+}
+
 public enum SettingsSaveError: Error, Equatable, Sendable {
     case invalidLLMConfiguration
     case invalidPrompt
     case insecureEndpoint
+    case credentialsUnavailable
+    case saveInProgress
     case persistenceFailed
     case rollbackIncomplete
 }
@@ -77,6 +84,10 @@ extension SettingsSaveError: LocalizedError {
             "Prompts cannot be empty."
         case .insecureEndpoint:
             "Use HTTPS, or HTTP only on this Mac."
+        case .credentialsUnavailable:
+            "Credentials are unavailable. Reload them and try again."
+        case .saveInProgress:
+            "Settings are already being saved."
         case .persistenceFailed:
             "Settings could not be saved. Try again."
         case .rollbackIncomplete:
@@ -100,6 +111,7 @@ public final class SettingsViewModel {
     public var llmAPIKey: String
     public private(set) var googleConnectionState = ConnectionTestState.idle
     public private(set) var llmConnectionState = ConnectionTestState.idle
+    public private(set) var credentialAccessState: CredentialAccessState
     public private(set) var saveState = SettingsSaveState.idle
     public private(set) var saveError: String?
 
@@ -125,13 +137,13 @@ public final class SettingsViewModel {
         session: TranslationSession?
     ) async -> SettingsViewModel {
         let preferences = await preferencesStore.load()
-        let googleAPIKey = (try? credentialStore.read(.googleAPIKey)) ?? ""
-        let llmAPIKey = (try? credentialStore.read(.llmAPIKey)) ?? ""
+        let credentials = loadCredentials(from: credentialStore)
         return SettingsViewModel(
             preferences: preferences,
-            googleAPIKey: googleAPIKey,
-            llmAPIKey: llmAPIKey,
-            actualLaunchAtLogin: launchAtLogin.isEnabled,
+            googleAPIKey: credentials.googleAPIKey ?? "",
+            llmAPIKey: credentials.llmAPIKey ?? "",
+            credentialAccessState: credentials.state,
+            actualLaunchAtLogin: launchAtLogin.status.isRegistered,
             preferencesStore: preferencesStore,
             credentialStore: credentialStore,
             launchController: launchAtLogin,
@@ -147,6 +159,7 @@ public final class SettingsViewModel {
         preferences: AppPreferences,
         googleAPIKey: String,
         llmAPIKey: String,
+        credentialAccessState: CredentialAccessState,
         actualLaunchAtLogin: Bool,
         preferencesStore: any PreferencesStoring,
         credentialStore: any CredentialStoring,
@@ -167,6 +180,7 @@ public final class SettingsViewModel {
         defaultPromptPresetID = preferences.defaultPromptPresetID
         self.googleAPIKey = googleAPIKey
         self.llmAPIKey = llmAPIKey
+        self.credentialAccessState = credentialAccessState
         self.preferencesStore = preferencesStore
         self.credentialStore = credentialStore
         self.launchController = launchController
@@ -178,8 +192,17 @@ public final class SettingsViewModel {
     }
 
     public func save() async throws {
+        guard saveState != .saving else {
+            throw SettingsSaveError.saveInProgress
+        }
         saveState = .saving
         saveError = nil
+
+        guard credentialAccessState == .loaded else {
+            let publicError = SettingsSaveError.credentialsUnavailable
+            recordFailure(publicError, rollbackIncomplete: false)
+            throw publicError
+        }
 
         let proposed: ProposedSettings
         do {
@@ -194,17 +217,17 @@ public final class SettingsViewModel {
         }
 
         let oldPreferences = await preferencesStore.load()
-        let oldGoogleKey: String?
-        let oldLLMKey: String?
-        do {
-            oldGoogleKey = try credentialStore.read(.googleAPIKey)
-            oldLLMKey = try credentialStore.read(.llmAPIKey)
-        } catch {
-            let publicError = SettingsSaveError.persistenceFailed
+        let credentialSnapshot = Self.loadCredentials(from: credentialStore)
+        guard credentialSnapshot.state == .loaded else {
+            credentialAccessState = .unavailable
+            let publicError = SettingsSaveError.credentialsUnavailable
             recordFailure(publicError, rollbackIncomplete: false)
             throw publicError
         }
-        let oldLaunch = launchController.isEnabled
+        let oldGoogleKey = credentialSnapshot.googleAPIKey
+        let oldLLMKey = credentialSnapshot.llmAPIKey
+        let oldLaunch = launchController.status.isRegistered
+        let oldShortcut = shortcutRegistrar.registeredShortcut
 
         var shortcutAttempted = false
         var launchAttempted = false
@@ -217,7 +240,7 @@ public final class SettingsViewModel {
             shortcutAttempted = true
             try shortcutRegistrar.register(proposed.preferences.globalShortcut, action: shortcutAction)
 
-            if launchController.isEnabled != proposed.preferences.launchAtLogin {
+            if launchController.status.isRegistered != proposed.preferences.launchAtLogin {
                 launchAttempted = true
                 try launchController.setEnabled(proposed.preferences.launchAtLogin)
             }
@@ -235,7 +258,7 @@ public final class SettingsViewModel {
                 googleKey: googleCredentialAttempted ? .some(oldGoogleKey) : nil,
                 llmKey: llmCredentialAttempted ? .some(oldLLMKey) : nil,
                 launch: launchAttempted ? oldLaunch : nil,
-                shortcut: oldPreferences.globalShortcut,
+                shortcut: oldShortcut,
                 restoreShortcut: shortcutAttempted
             )
             let publicError = rollbackFailed
@@ -254,6 +277,17 @@ public final class SettingsViewModel {
 
     public func restoreTechnologyAndRnDPrompt() {
         technologyAndRnDPrompt = DefaultPrompts.technologyAndRnD
+    }
+
+    public func reloadCredentials() {
+        let credentials = Self.loadCredentials(from: credentialStore)
+        guard credentials.state == .loaded else {
+            credentialAccessState = .unavailable
+            return
+        }
+        googleAPIKey = credentials.googleAPIKey ?? ""
+        llmAPIKey = credentials.llmAPIKey ?? ""
+        credentialAccessState = .loaded
     }
 
     public func testGoogleConnection() async {
@@ -276,20 +310,7 @@ public final class SettingsViewModel {
         let generation = llmTestGeneration
         let configuration: LLMProviderConfiguration
         do {
-            let proposed = try validatedSettings()
-            guard !proposed.llmBaseURL.isEmpty else {
-                llmConnectionState = .failure(.unconfigured)
-                return
-            }
-            let prompt = proposed.preferences.defaultPromptPresetID == .general
-                ? proposed.preferences.generalPrompt
-                : proposed.preferences.technologyAndRnDPrompt
-            configuration = LLMProviderConfiguration(
-                baseURL: proposed.llmBaseURL,
-                apiKey: proposed.llmAPIKey,
-                model: proposed.preferences.llmModel,
-                systemPrompt: prompt
-            )
+            configuration = try validatedLLMConnectionConfiguration()
         } catch SettingsSaveError.insecureEndpoint {
             llmConnectionState = .failure(.insecureEndpoint)
             return
@@ -301,6 +322,30 @@ public final class SettingsViewModel {
         let result = await connectionTester.testLLM(configuration: configuration)
         guard generation == llmTestGeneration else { return }
         llmConnectionState = result
+    }
+
+    private func validatedLLMConnectionConfiguration() throws -> LLMProviderConfiguration {
+        let baseURL = llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = llmAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedPrompt = (
+            defaultPromptPresetID == .general ? generalPrompt : technologyAndRnDPrompt
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURL.isEmpty, !apiKey.isEmpty, !model.isEmpty, !selectedPrompt.isEmpty else {
+            throw SettingsSaveError.invalidLLMConfiguration
+        }
+        let normalizedBaseURL: String
+        do {
+            normalizedBaseURL = try EndpointPolicy.validatedAPIBaseURL(baseURL).absoluteString
+        } catch {
+            throw SettingsSaveError.insecureEndpoint
+        }
+        return LLMProviderConfiguration(
+            baseURL: normalizedBaseURL,
+            apiKey: apiKey,
+            model: model,
+            systemPrompt: selectedPrompt
+        )
     }
 
     private func validatedSettings() throws -> ProposedSettings {
@@ -366,7 +411,7 @@ public final class SettingsViewModel {
         if let googleKey {
             do { try restoreCredential(googleKey, key: .googleAPIKey) } catch { failed = true }
         }
-        if let launch, launchController.isEnabled != launch {
+        if let launch, launchController.status.isRegistered != launch {
             do { try launchController.setEnabled(launch) } catch { failed = true }
         }
         if restoreShortcut {
@@ -412,6 +457,28 @@ public final class SettingsViewModel {
         saveState = rollbackIncomplete ? .needsAttention : .failed
         saveError = error.localizedDescription
     }
+
+    private static func loadCredentials(
+        from store: any CredentialStoring
+    ) -> LoadedCredentials {
+        let googleResult = Result { try store.read(.googleAPIKey) }
+        let llmResult = Result { try store.read(.llmAPIKey) }
+        switch (googleResult, llmResult) {
+        case let (.success(googleAPIKey), .success(llmAPIKey)):
+            return LoadedCredentials(
+                googleAPIKey: googleAPIKey,
+                llmAPIKey: llmAPIKey,
+                state: .loaded
+            )
+        default:
+            // 任一 Keychain 读取失败时，不发布部分密钥；显式不可用状态会阻止保存覆盖未知值。
+            return LoadedCredentials(
+                googleAPIKey: nil,
+                llmAPIKey: nil,
+                state: .unavailable
+            )
+        }
+    }
 }
 
 private struct ProposedSettings {
@@ -419,4 +486,10 @@ private struct ProposedSettings {
     let googleAPIKey: String
     let llmAPIKey: String
     let llmBaseURL: String
+}
+
+private struct LoadedCredentials {
+    let googleAPIKey: String?
+    let llmAPIKey: String?
+    let state: CredentialAccessState
 }

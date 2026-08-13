@@ -3,6 +3,7 @@ import InstantTranslationInfrastructure
 
 @MainActor
 public protocol GlobalShortcutRegistering: AnyObject {
+    var registeredShortcut: KeyboardShortcut? { get }
     func register(
         _ shortcut: KeyboardShortcut?,
         action: @escaping @MainActor () -> Void
@@ -16,6 +17,7 @@ public enum ShortcutRegistrationError: Error, Equatable {
 
 @MainActor
 public final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
+    public private(set) var registeredShortcut: KeyboardShortcut?
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var action: (@MainActor () -> Void)?
@@ -72,6 +74,7 @@ public final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
             self.action = nil
             throw ShortcutRegistrationError.carbonStatus(status)
         }
+        registeredShortcut = shortcut
     }
 
     public func unregister() {
@@ -84,5 +87,6 @@ public final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
         hotKey = nil
         handler = nil
         action = nil
+        registeredShortcut = nil
     }
 }

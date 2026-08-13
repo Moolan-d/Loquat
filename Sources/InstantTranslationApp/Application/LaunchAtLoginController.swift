@@ -1,14 +1,33 @@
 import ServiceManagement
 
+public enum LaunchAtLoginStatus: Equatable, Sendable {
+    case notRegistered
+    case enabled
+    case requiresApproval
+    case notFound
+
+    public var isRegistered: Bool {
+        self == .enabled || self == .requiresApproval
+    }
+
+    public var isEnabled: Bool {
+        self == .enabled
+    }
+}
+
 @MainActor
 public protocol LaunchAtLoginControlling: AnyObject {
-    var isEnabled: Bool { get }
+    var status: LaunchAtLoginStatus { get }
     func setEnabled(_ enabled: Bool) throws
+}
+
+public extension LaunchAtLoginControlling {
+    var isEnabled: Bool { status.isEnabled }
 }
 
 @MainActor
 protocol LaunchAtLoginServicing: AnyObject {
-    var isEnabled: Bool { get }
+    var status: LaunchAtLoginStatus { get }
     func register() throws
     func unregister() throws
 }
@@ -21,8 +40,14 @@ private final class MainAppLaunchAtLoginService: LaunchAtLoginServicing {
         self.service = service
     }
 
-    var isEnabled: Bool {
-        service.status == .enabled
+    var status: LaunchAtLoginStatus {
+        switch service.status {
+        case .notRegistered: .notRegistered
+        case .enabled: .enabled
+        case .requiresApproval: .requiresApproval
+        case .notFound: .notFound
+        @unknown default: .notFound
+        }
     }
 
     func register() throws {
@@ -46,12 +71,12 @@ public final class LaunchAtLoginController: LaunchAtLoginControlling {
         self.service = service
     }
 
-    public var isEnabled: Bool {
-        service.isEnabled
+    public var status: LaunchAtLoginStatus {
+        service.status
     }
 
     public func setEnabled(_ enabled: Bool) throws {
-        guard enabled != service.isEnabled else { return }
+        guard enabled != service.status.isRegistered else { return }
         if enabled {
             try service.register()
         } else {
