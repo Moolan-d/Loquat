@@ -9,18 +9,30 @@ public final class SettingsWindowController: NSWindowController {
     private let activateApplication: @MainActor () -> Void
     private let orderWindowFront: @MainActor (NSWindow, Any?) -> Void
 
-    public init(
+    public convenience init(model: SettingsViewModel) {
+        self.init(model: model, installApplicationMenu: true)
+    }
+
+    convenience init(model: SettingsViewModel, installApplicationMenu: Bool) {
+        self.init(
+            model: model,
+            notificationCenter: .default,
+            activateApplication: {
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            },
+            orderWindowFront: { window, sender in
+                window.makeKeyAndOrderFront(sender)
+            },
+            installApplicationMenu: installApplicationMenu
+        )
+    }
+
+    init(
         model: SettingsViewModel,
-        notificationCenter: NotificationCenter = .default,
-        activateApplication: @escaping @MainActor () -> Void = {
-            NSApplication.shared.activate(ignoringOtherApps: true)
-        },
-        orderWindowFront: @escaping @MainActor (NSWindow, Any?) -> Void = {
-            window,
-            sender in
-            window.makeKeyAndOrderFront(sender)
-        },
-        installApplicationMenu: Bool = true
+        notificationCenter: NotificationCenter,
+        activateApplication: @escaping @MainActor () -> Void,
+        orderWindowFront: @escaping @MainActor (NSWindow, Any?) -> Void,
+        installApplicationMenu: Bool
     ) {
         self.model = model
         self.notificationCenter = notificationCenter

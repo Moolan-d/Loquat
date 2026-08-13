@@ -195,6 +195,201 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertEqual(llmConfigurations.count, 1)
     }
 
+    func testSettingsViewRegistryExposesRealGroupsControlsAndUnavailableCredentialActions() async {
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "google-secret",
+            .llmAPIKey: "llm-secret",
+        ])
+        credentials.failNextRead(.googleAPIKey)
+        let model = await makeModel(credentials: credentials)
+        let registry = SettingsViewRegistry(model: model)
+        XCTAssertEqual(
+            registry.groups,
+            [.general, .translationServices, .llmPrompts]
+        )
+        XCTAssertEqual(Set(registry.controls.map(\.id)), Set(SettingsControlID.allCases))
+        XCTAssertTrue(
+            registry.controls.allSatisfy {
+                !$0.accessibilityLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        )
+        XCTAssertEqual(
+            Set(registry.controls.filter { $0.group == .general }.map(\.id)),
+            [.launchAtLogin, .clipboardOnOpen, .globalShortcut]
+        )
+        XCTAssertEqual(
+            Set(registry.controls.filter { $0.group == .translationServices }.map(\.id)),
+            [
+                .credentialStatus,
+                .reloadCredentials,
+                .googleAPIKey,
+                .googleTest,
+                .googleStatus,
+                .llmBaseURL,
+                .llmAPIKey,
+                .llmModel,
+                .llmTest,
+                .llmStatus,
+                .connectionWarning,
+            ]
+        )
+        XCTAssertEqual(
+            Set(registry.controls.filter { $0.group == .llmPrompts }.map(\.id)),
+            [
+                .promptPreset,
+                .generalPrompt,
+                .restoreGeneralPrompt,
+                .technologyPrompt,
+                .restoreTechnologyPrompt,
+            ]
+        )
+        XCTAssertEqual(
+            registry.control(.launchAtLogin).accessibilityLabel,
+            "Launch Instant Translation at login"
+        )
+        XCTAssertEqual(
+            registry.control(.googleAPIKey).accessibilityLabel,
+            "Google Cloud Translation API key"
+        )
+        XCTAssertEqual(
+            registry.control(.llmTest).accessibilityLabel,
+            "Test LLM connection"
+        )
+        XCTAssertFalse(registry.control(.googleAPIKey).isEnabled)
+        XCTAssertFalse(registry.control(.llmAPIKey).isEnabled)
+        XCTAssertFalse(registry.control(.save).isEnabled)
+        XCTAssertTrue(registry.control(.reloadCredentials).isVisible)
+        XCTAssertEqual(
+            registry.control(.credentialStatus).value,
+            "Credentials are unavailable. Reload them to edit or save settings."
+        )
+
+        await registry.perform(.reloadCredentials)
+
+        XCTAssertEqual(model.credentialAccessState, .loaded)
+        let reloaded = SettingsViewRegistry(model: model)
+        XCTAssertTrue(reloaded.control(.googleAPIKey).isEnabled)
+        XCTAssertTrue(reloaded.control(.llmAPIKey).isEnabled)
+        XCTAssertTrue(reloaded.control(.save).isEnabled)
+        XCTAssertFalse(reloaded.control(.reloadCredentials).isVisible)
+    }
+
+    func testSettingsViewRegistrySaveRunsSaveAndReflectsSavingThenSaved() async {
+        let preferences = SuspendingPreferencesStore()
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: MemoryCredentialStore(),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        await preferences.suspendNextLoad()
+
+        let save = Task { await SettingsViewRegistry(model: model).perform(.save) }
+        await preferences.waitUntilLoadSuspends()
+
+        XCTAssertEqual(model.saveState, .saving)
+        XCTAssertFalse(SettingsViewRegistry(model: model).control(.save).isEnabled)
+        XCTAssertEqual(
+            SettingsViewRegistry(model: model).control(.saveStatus).value,
+            "Saving settings…"
+        )
+
+        await preferences.resumeLoad()
+        await save.value
+
+        XCTAssertEqual(model.saveState, .saved)
+        XCTAssertTrue(SettingsViewRegistry(model: model).control(.save).isEnabled)
+        XCTAssertEqual(
+            SettingsViewRegistry(model: model).control(.saveStatus).value,
+            "Settings saved."
+        )
+    }
+
+    func testSettingsViewRegistryRoutesEachConnectionControlToItsProvider() async {
+        let tester = RecordingConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+        model.googleAPIKey = "google-key"
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmAPIKey = "llm-key"
+        model.llmModel = "llm-model"
+        let registry = SettingsViewRegistry(model: model)
+
+        await registry.perform(.googleTest)
+        var googleKeys = await tester.googleKeys
+        var llmConfigurations = await tester.llmConfigurations
+        XCTAssertEqual(googleKeys, ["google-key"])
+        XCTAssertEqual(llmConfigurations.count, 0)
+
+        await registry.perform(.llmTest)
+        googleKeys = await tester.googleKeys
+        llmConfigurations = await tester.llmConfigurations
+        XCTAssertEqual(googleKeys.count, 1)
+        XCTAssertEqual(llmConfigurations.count, 1)
+    }
+
+    func testSettingsViewRegistryRoutesEachRestoreControlToItsPrompt() async {
+        let model = await makeModel()
+        let registry = SettingsViewRegistry(model: model)
+        model.generalPrompt = "custom general"
+        model.technologyAndRnDPrompt = "custom technology"
+
+        await registry.perform(.restoreGeneralPrompt)
+        XCTAssertNotEqual(model.generalPrompt, "custom general")
+        XCTAssertEqual(model.technologyAndRnDPrompt, "custom technology")
+
+        await registry.perform(.restoreTechnologyPrompt)
+        XCTAssertNotEqual(model.technologyAndRnDPrompt, "custom technology")
+    }
+
+    func testSettingsViewRegistryConnectionActionsRouteToCorrectProviderAndDisableIndependently() async {
+        let tester = ControlledConnectionTester()
+        let model = await makeModel(connectionTester: tester)
+        model.googleAPIKey = "google-key"
+        model.llmBaseURL = "https://api.example.com/v1"
+        model.llmAPIKey = "llm-key"
+        model.llmModel = "llm-model"
+        let google = Task { await SettingsViewRegistry(model: model).perform(.googleTest) }
+        while await tester.googleCallCount() == 0 {
+            await Task.yield()
+        }
+
+        var googleCallCount = await tester.googleCallCount()
+        var llmCallCount = await tester.llmCallCount()
+        XCTAssertEqual(llmCallCount, 0)
+        XCTAssertFalse(SettingsViewRegistry(model: model).control(.googleTest).isEnabled)
+        XCTAssertTrue(SettingsViewRegistry(model: model).control(.llmTest).isEnabled)
+        XCTAssertEqual(
+            SettingsViewRegistry(model: model).control(.googleStatus).value,
+            "Google: Testing…"
+        )
+
+        await tester.completeGoogle(at: 0, with: .success)
+        await google.value
+
+        let llm = Task { await SettingsViewRegistry(model: model).perform(.llmTest) }
+        while await tester.llmCallCount() == 0 {
+            await Task.yield()
+        }
+
+        googleCallCount = await tester.googleCallCount()
+        llmCallCount = await tester.llmCallCount()
+        XCTAssertEqual(googleCallCount, 1)
+        XCTAssertEqual(llmCallCount, 1)
+        XCTAssertTrue(SettingsViewRegistry(model: model).control(.googleTest).isEnabled)
+        XCTAssertFalse(SettingsViewRegistry(model: model).control(.llmTest).isEnabled)
+        XCTAssertEqual(
+            SettingsViewRegistry(model: model).control(.llmStatus).value,
+            "LLM: Testing…"
+        )
+
+        await tester.completeLLM(at: 0, with: .success)
+        await llm.value
+    }
+
     func testSettingsControllerReusesWindowAcrossCloseShowAndNotification() async throws {
         let center = NotificationCenter()
         var activationCount = 0
@@ -241,7 +436,11 @@ final class SettingsPresentationTests: XCTestCase {
         let controller = SettingsWindowController(
             model: await makeModel(),
             notificationCenter: NotificationCenter(),
-            activateApplication: { activationCount += 1 }
+            activateApplication: { activationCount += 1 },
+            orderWindowFront: { window, sender in
+                window.makeKeyAndOrderFront(sender)
+            },
+            installApplicationMenu: true
         )
         let appMenu = try XCTUnwrap(application.mainMenu?.items.first?.submenu)
         let settings = try XCTUnwrap(appMenu.items.first { $0.keyEquivalent == "," })
@@ -261,6 +460,8 @@ final class SettingsPresentationTests: XCTestCase {
     }
 
     func testInjectedContainerSharesSettingsRuntimeDependencies() async throws {
+        let application = NSApplication.shared
+        let originalMenu = application.mainMenu
         var preferencesValue = AppPreferences()
         preferencesValue.defaultPromptPresetID = .general
         let preferences = MemoryPreferencesStore(preferencesValue)
@@ -272,9 +473,11 @@ final class SettingsPresentationTests: XCTestCase {
             transport: RecordingHTTPTransport(responses: []),
             launchAtLogin: FakeLaunchAtLoginController(),
             shortcutRegistrar: shortcut,
-            clipboardSource: EmptyInputSource()
+            clipboardSource: EmptyInputSource(),
+            installApplicationMenu: false
         )
 
+        XCTAssertTrue(application.mainMenu === originalMenu)
         XCTAssertTrue(container.settingsWindowController.model === container.settingsViewModel)
         container.settingsViewModel.defaultPromptPresetID = .technologyAndRnD
         container.settingsViewModel.globalShortcut = KeyboardShortcut(
@@ -293,6 +496,39 @@ final class SettingsPresentationTests: XCTestCase {
             shortcut.registeredShortcut,
             KeyboardShortcut(keyCode: 0, carbonModifiers: UInt32(cmdKey))
         )
+    }
+
+    func testStartCannotOverwriteShortcutSavedAfterContainerConstruction() async throws {
+        var initialPreferences = AppPreferences()
+        let oldShortcut = KeyboardShortcut(
+            keyCode: 1,
+            carbonModifiers: UInt32(optionKey)
+        )
+        let newShortcut = KeyboardShortcut(
+            keyCode: 0,
+            carbonModifiers: UInt32(cmdKey)
+        )
+        initialPreferences.globalShortcut = oldShortcut
+        let preferences = StaleReadPreferencesStore(initialPreferences)
+        let shortcut = FakeSettingsShortcutRegistrar()
+        let container = await ApplicationContainer.make(
+            preferencesStore: preferences,
+            credentialStore: MemoryCredentialStore(),
+            transport: RecordingHTTPTransport(responses: []),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: shortcut,
+            clipboardSource: EmptyInputSource(),
+            installApplicationMenu: false
+        )
+        defer { container.stop() }
+        container.settingsViewModel.globalShortcut = newShortcut
+        try await container.settingsViewModel.save()
+        await preferences.returnOnce(initialPreferences)
+
+        container.start()
+
+        XCTAssertEqual(shortcut.registerValues, [newShortcut, newShortcut])
+        XCTAssertEqual(shortcut.registeredShortcut, newShortcut)
     }
 
     func testTranslationPopoverHasNoPromptPresetControl() {
@@ -354,6 +590,7 @@ final class SettingsPresentationTests: XCTestCase {
     private func allSubviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap(allSubviews(of:))
     }
+
 }
 
 private struct EmptyInputSource: InputSource {
@@ -361,5 +598,28 @@ private struct EmptyInputSource: InputSource {
 
     func read() async throws -> SourceText? {
         nil
+    }
+}
+
+private actor StaleReadPreferencesStore: PreferencesStoring {
+    private var value: AppPreferences
+    private var staleValue: AppPreferences?
+
+    init(_ value: AppPreferences) {
+        self.value = value
+    }
+
+    func load() -> AppPreferences {
+        guard let staleValue else { return value }
+        self.staleValue = nil
+        return staleValue
+    }
+
+    func save(_ preferences: AppPreferences) {
+        value = preferences
+    }
+
+    func returnOnce(_ preferences: AppPreferences) {
+        staleValue = preferences
     }
 }

@@ -76,7 +76,8 @@ public final class ApplicationContainer {
         transport: any HTTPTransport,
         launchAtLogin: LaunchAtLoginControlling,
         shortcutRegistrar: GlobalShortcutRegistering,
-        clipboardSource: any InputSource
+        clipboardSource: any InputSource,
+        installApplicationMenu: Bool = true
     ) async -> ApplicationContainer {
         let google = GoogleTranslationProvider(transport: transport) {
             try credentialStore.read(.googleAPIKey)
@@ -137,7 +138,10 @@ public final class ApplicationContainer {
             providerAppearance: appearance,
             session: session
         )
-        let settingsWindowController = SettingsWindowController(model: settingsViewModel)
+        let settingsWindowController = SettingsWindowController(
+            model: settingsViewModel,
+            installApplicationMenu: installApplicationMenu
+        )
         let container = ApplicationContainer(
             session: session,
             preferencesStore: preferencesStore,
@@ -157,16 +161,14 @@ public final class ApplicationContainer {
     }
 
     public func start() {
-        Task {
-            let preferences = await preferencesStore.load()
-            do {
-                try shortcutRegistrar.register(preferences.globalShortcut) {
-                    [weak statusBarController] in
-                    statusBarController?.toggleFromShortcut()
-                }
-            } catch {
-                logger.error("shortcut registration failed")
+        do {
+            // 启动注册与设置保存同在 MainActor 顺序执行，避免异步旧偏好覆盖刚保存的新快捷键。
+            try shortcutRegistrar.register(settingsViewModel.globalShortcut) {
+                [weak statusBarController] in
+                statusBarController?.toggleFromShortcut()
             }
+        } catch {
+            logger.error("shortcut registration failed")
         }
     }
 
