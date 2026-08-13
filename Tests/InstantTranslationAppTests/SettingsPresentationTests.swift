@@ -406,10 +406,11 @@ final class SettingsPresentationTests: XCTestCase {
             },
             installApplicationMenu: false
         )
+        XCTAssertFalse(controller.isSettingsWindowConstructed)
+        controller.showSettings(nil)
         let originalWindow = try XCTUnwrap(controller.window)
         XCTAssertFalse(originalWindow.isReleasedWhenClosed)
 
-        controller.showSettings(nil)
         XCTAssertTrue(originalWindow.isVisible)
         XCTAssertTrue(orderedWindows.last === originalWindow)
         XCTAssertTrue(routedToKeyAndFront)
@@ -426,6 +427,59 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertTrue(routedToKeyAndFront)
         XCTAssertEqual(activationCount, 2)
         originalWindow.orderOut(nil)
+    }
+
+    func testSettingsWindowIsConstructedOnlyOnFirstPresentation() async {
+        var constructionCount = 0
+        let controller = SettingsWindowController(
+            model: await makeModel(),
+            notificationCenter: NotificationCenter(),
+            activateApplication: {},
+            orderWindowFront: { window, sender in window.makeKeyAndOrderFront(sender) },
+            installApplicationMenu: false,
+            makeWindow: { model in
+                constructionCount += 1
+                return SettingsWindowController.makeProductionWindow(model: model)
+            }
+        )
+
+        XCTAssertFalse(controller.isSettingsWindowConstructed)
+        XCTAssertEqual(constructionCount, 0)
+        controller.showSettings(nil)
+        let firstWindow = controller.window
+        XCTAssertTrue(controller.isSettingsWindowConstructed)
+        XCTAssertEqual(constructionCount, 1)
+        firstWindow?.close()
+        controller.showSettings(nil)
+        XCTAssertTrue(controller.window === firstWindow)
+        XCTAssertEqual(constructionCount, 1)
+        controller.window?.orderOut(nil)
+    }
+
+    func testConcurrentOpenNotificationsConstructOneSettingsWindow() async {
+        let center = NotificationCenter()
+        var constructionCount = 0
+        var orderedWindows: [NSWindow] = []
+        let controller = SettingsWindowController(
+            model: await makeModel(),
+            notificationCenter: center,
+            activateApplication: {},
+            orderWindowFront: { window, _ in orderedWindows.append(window) },
+            installApplicationMenu: false,
+            makeWindow: { model in
+                constructionCount += 1
+                return SettingsWindowController.makeProductionWindow(model: model)
+            }
+        )
+
+        center.post(name: .openInstantTranslationSettings, object: nil)
+        center.post(name: .openInstantTranslationSettings, object: nil)
+
+        XCTAssertTrue(controller.isSettingsWindowConstructed)
+        XCTAssertEqual(constructionCount, 1)
+        XCTAssertEqual(orderedWindows.count, 2)
+        XCTAssertTrue(orderedWindows.dropFirst().allSatisfy { $0 === orderedWindows.first })
+        controller.window?.orderOut(nil)
     }
 
     func testApplicationMenuRoutesSettingsAndRetainsQuitCommand() async throws {

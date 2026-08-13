@@ -8,6 +8,10 @@ public final class SettingsWindowController: NSWindowController {
     private let notificationCenter: NotificationCenter
     private let activateApplication: @MainActor () -> Void
     private let orderWindowFront: @MainActor (NSWindow, Any?) -> Void
+    private let makeWindow: @MainActor (SettingsViewModel) -> NSWindow
+
+    // `NSWindowController.isWindowLoaded` 在以 nil 窗口初始化时仍可能为真，直接观察窗口实例。
+    var isSettingsWindowConstructed: Bool { window != nil }
 
     public convenience init(model: SettingsViewModel) {
         self.init(model: model, installApplicationMenu: true)
@@ -23,7 +27,8 @@ public final class SettingsWindowController: NSWindowController {
             orderWindowFront: { window, sender in
                 window.makeKeyAndOrderFront(sender)
             },
-            installApplicationMenu: installApplicationMenu
+            installApplicationMenu: installApplicationMenu,
+            makeWindow: Self.makeProductionWindow(model:)
         )
     }
 
@@ -32,26 +37,15 @@ public final class SettingsWindowController: NSWindowController {
         notificationCenter: NotificationCenter,
         activateApplication: @escaping @MainActor () -> Void,
         orderWindowFront: @escaping @MainActor (NSWindow, Any?) -> Void,
-        installApplicationMenu: Bool
+        installApplicationMenu: Bool,
+        makeWindow: @escaping @MainActor (SettingsViewModel) -> NSWindow = SettingsWindowController.makeProductionWindow(model:)
     ) {
         self.model = model
         self.notificationCenter = notificationCenter
         self.activateApplication = activateApplication
         self.orderWindowFront = orderWindowFront
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Instant Translation Settings"
-        // 控制器由组合根强持有，窗口关闭只隐藏；再次打开复用同一模型与窗口。
-        window.isReleasedWhenClosed = false
-        window.center()
-        window.contentView = NSHostingView(rootView: SettingsView(model: model))
-        window.setFrameAutosaveName("InstantTranslationSettingsWindow")
-        super.init(window: window)
+        self.makeWindow = makeWindow
+        super.init(window: nil)
 
         notificationCenter.addObserver(
             self,
@@ -70,15 +64,38 @@ public final class SettingsWindowController: NSWindowController {
     }
 
     @objc public func showSettings(_ sender: Any?) {
-        showWindow(sender)
+        let window = ensureWindow()
         activateApplication()
-        if let window {
-            orderWindowFront(window, sender)
-        }
+        orderWindowFront(window, sender)
     }
 
     @objc private func openSettingsNotification(_ notification: Notification) {
         showSettings(nil)
+    }
+
+    private func ensureWindow() -> NSWindow {
+        if isWindowLoaded, let window {
+            return window
+        }
+        // Settings 视图树在首次实际打开时创建；关闭后仍复用同一窗口和模型。
+        let created = makeWindow(model)
+        window = created
+        return created
+    }
+
+    static func makeProductionWindow(model: SettingsViewModel) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Instant Translation Settings"
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.contentView = NSHostingView(rootView: SettingsView(model: model))
+        window.setFrameAutosaveName("InstantTranslationSettingsWindow")
+        return window
     }
 
     private func installMainMenu() {
