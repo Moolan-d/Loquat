@@ -291,6 +291,14 @@ The Prompts section contains editable General and Technology & R&D system prompt
 
 Google and LLM API keys are stored only in macOS Keychain with the `WhenUnlockedThisDeviceOnly` accessibility class. Base URL, model name, prompts, preset selection, shortcut, and Boolean settings are stored in `UserDefaults`.
 
+The Keychain implementation is selected explicitly by the build's signing mode:
+
+- `adhoc`, used for the author's current self-use and GitHub Release builds, uses the macOS file-based Keychain and does not set `kSecUseDataProtectionKeychain`;
+- `signed`, reserved for a future Developer ID/provisioned build, uses the Data Protection Keychain with the verified application identifier and keychain access group; and
+- the application never catches a Data Protection Keychain entitlement failure and silently retries against the file-based Keychain.
+
+Both modes use the same application-owned service and credential account identifiers. A future transition from `adhoc` to `signed` performs an explicit, versioned migration: read the legacy item, write and read-verify the destination item, and only then delete the legacy item. A migration failure leaves the original credential intact and presents a sanitized, retryable error rather than replacing it with an empty value or plaintext preference.
+
 The application never persists:
 
 - clipboard contents;
@@ -301,6 +309,14 @@ The application never persists:
 - generated audio.
 
 Application exit clears the current in-memory session.
+
+### 9.5 Signing and GitHub Release distribution
+
+The release tooling accepts exactly `SIGNING_MODE=adhoc` or `SIGNING_MODE=signed` and never infers a mode from whichever identity happens to exist on the build machine.
+
+The current public distribution mode is `adhoc`. It produces an application ZIP and `SHA256SUMS` for GitHub Releases. The project does not claim that this artifact is notarized or accepted automatically by Gatekeeper. User instructions follow Apple's per-application flow: attempt to open the application, then use System Settings → Privacy & Security → Open Anyway when macOS blocks it. The project does not instruct users to disable Gatekeeper globally or require `sudo xattr` as the default installation path.
+
+The future `signed` mode requires an explicitly supplied Developer ID identity, team identifier, and matching provisioning profile. It validates the actual signature, application identifier, team identifier, and exact keychain access group before producing an artifact. Notarization is a separate release gate and must not be implied by code signing alone.
 
 ## 10. Security, privacy, and permissions
 
@@ -344,7 +360,7 @@ Network integration tests use local stub transports and consume no real API quot
 
 UI tests cover menu-bar opening, immediate focus, outside-click dismissal, direction override, independent copy actions and success feedback, clipboard-on-open behavior, and settings persistence.
 
-Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs.
+Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the exact query shape for file-based and Data Protection Keychain modes, verify there is no runtime fallback, and cover read-verified migration without requiring a provisioned XCTest host. Signed-mode live Keychain access remains a verification gate for a genuinely provisioned application bundle.
 
 ### 12.2 Manual and performance acceptance
 
@@ -365,3 +381,20 @@ Real-provider tests are manual developer tests. They do not run in CI and their 
 ## 13. First-release success criteria
 
 The first release succeeds if a developer can click the menu-bar icon, type or automatically import a copied specialized term, and independently compare a Google translation with a concise terminology-aware LLM answer without opening a browser, while the application remains unobtrusive, private, native, and within the 50 MB idle-memory target.
+
+## 14. Phase 2 TODO — Native capability expansion
+
+The following Phase 2 candidates capture the parts of MoePeek that are useful to study while preserving Instant Translation's narrower security, testing, and module boundaries. MoePeek is an AGPL-3.0 project; these items describe product and architectural ideas only. Implementation must be original unless the project deliberately adopts compatible licensing obligations.
+
+- [ ] **Introduce a dedicated non-activating result panel for selection and OCR workflows.** Keep the first-release menu-bar popover for manual input. A selection-triggered result must appear without stealing focus from the source application; a user-invoked input surface may activate the application and focus its editor. Outside-click and Escape dismissal, multi-display positioning, optional pinning, and focus restoration require AppKit-level tests.
+- [ ] **Add selection translation as a permission-gated `InputSource`.** Evaluate a layered acquisition strategy of Accessibility first, application-specific adapters only where justified, and simulated copy as the final fallback. The clipboard fallback must preserve every pasteboard item and type, serialize concurrent grabs, avoid returning stale content, detect a real user copy during capture, and restore the old clipboard only when no external modification occurred.
+- [ ] **Add native OCR as a permission-gated `InputSource`.** Keep screen acquisition behind an adapter so ScreenCaptureKit and the system interactive capture flow can be evaluated independently. Use Vision for local recognition, automatically clean temporary image data, release large image objects promptly, support cancellation, and request Screen Recording access only when OCR is first invoked or explicitly enabled.
+- [ ] **Expand the provider registry without coupling providers to Settings UI or credential storage.** Preserve independent per-provider states, provider-specific retry and copy actions, and request-generation protection. Evaluate streaming output and multiple model slots only after measuring their UI, memory, and cancellation costs. New providers continue to implement the translation contract while configuration, credentials, and presentation remain separate modules.
+- [ ] **Expand languages through catalog data and capability matrices.** Add BCP 47 metadata, localized names, direction-detection strategies, provider-specific language mappings, and unsupported-pair behavior without introducing language-specific branches into the popover or provider coordinator.
+- [ ] **Render optional pronunciation data.** Providers that can supply IPA, Pinyin, or another named scheme populate `Pronunciation` records. Missing pronunciation remains a normal result rather than an error, and no pronunciation content is persisted.
+- [ ] **Add lazy TTS through `SpeechProvider` and a separate speech coordinator.** Playback uses `TranslationResult.speakableText` or its primary translation, never makes `TranslationResult` own a player or audio file, and instantiates speech frameworks only after the user requests playback. Start with Apple system speech; evaluate cloud speech providers separately.
+- [ ] **Add permission onboarding and recovery per capability.** Accessibility and Screen Recording must have independent rationale, request, status, and recovery flows. Enabling one capability must not require the other's permission. Release-update testing must explicitly cover whether ad-hoc identity changes require the user to grant permissions again.
+- [ ] **Evaluate Sparkle only after the GitHub Release pipeline is stable.** If adopted, publish a signed appcast and verify update archives with a dedicated Ed25519 key. Sparkle signing does not replace macOS code signing, notarization, checksum publication, or the documented Gatekeeper override path.
+- [ ] **Retain current quality and privacy gates while adding these capabilities.** Every new adapter receives deterministic unit and integration tests, permission APIs are statically scanned, source text and generated audio remain out of logs and persistent storage, and idle CPU/memory plus repeated open/close and capture cycles are measured before release.
+
+Phase 2 explicitly does not adopt MoePeek's migration of API credentials into `UserDefaults`, its non-notarized development-certificate distribution as a general signing solution, or direct source copying under an incompatible license.

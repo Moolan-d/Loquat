@@ -29,6 +29,17 @@
 - Bundled provider logos are selected locally from a fixed hostname map; do not download icons at runtime.
 - Use bundle identifier `com.instanttranslation.macos`, Keychain service `com.instanttranslation.macos.credentials`, and executable name `InstantTranslation` consistently.
 
+### Approved signing and credential-storage addendum (2026-08-13)
+
+- Release tooling accepts exactly `SIGNING_MODE=adhoc` or `SIGNING_MODE=signed`; it never guesses from local identities.
+- `adhoc` is the current self-use and GitHub Release mode. It uses the macOS file-based Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and must not add `kSecUseDataProtectionKeychain` to its SecItem queries.
+- `signed` is reserved for a future Developer ID/provisioned build. It uses Data Protection Keychain queries, verified application/team identifiers, and the exact provisioned keychain access group.
+- There is no runtime fallback from Data Protection Keychain to file-based Keychain. Backend selection is a construction-time consequence of the validated signing mode.
+- Both backends keep API keys out of `UserDefaults`, logs, errors, URLs, and release artifacts. A read failure is not treated as a missing credential.
+- A future `adhoc` → `signed` migration must be versioned and transactional per credential: read source, write destination, read-verify destination, then delete source. Failure preserves the source and exposes a sanitized retryable state.
+- The current GitHub Release contains an ad-hoc-signed `.app` ZIP plus `SHA256SUMS`. Documentation states that it is not notarized and uses Apple's per-app System Settings → Privacy & Security → Open Anyway flow. It must not recommend disabling Gatekeeper globally or use `sudo xattr` as the default path.
+- `signed` packaging continues to fail closed unless the supplied identity, actual TeamIdentifier, application identifier, provisioning profile, and exact keychain access group all match. Notarization is a distinct future gate.
+
 ## File Structure
 
 ```text
@@ -3662,6 +3673,7 @@ git commit -m "feat(settings): configure services and app behavior"
 - Create: `Tests/InstantTranslationFeatureTests/TranslationStressTests.swift`
 - Create: `scripts/verify-bundle.sh`
 - Create: `scripts/measure-memory.sh`
+- Create: `scripts/package-release.sh`
 - Create: `README.md`
 - Create: `PRIVACY.md`
 - Create: `docs/manual-test-checklist.md`
@@ -3793,7 +3805,8 @@ Run `bash scripts/measure-memory.sh` on a clean login session and record the mod
 - OpenAI-compatible Base URL semantics, model, and prompt presets;
 - clipboard-on-open behavior and the 500-character confirmation threshold;
 - Keychain storage and absence of history;
-- `swift test`, `bash scripts/package-app.sh`, and local installation commands; and
+- `swift test`, `bash scripts/package-app.sh`, and local installation commands;
+- `SIGNING_MODE=adhoc` as the current GitHub Release mode, the lack of notarization, the SHA-256 verification command, and Apple's per-application Open Anyway flow without global Gatekeeper disablement or a default `sudo xattr` instruction; and
 - deferred extension seams for selection, OCR, languages, pronunciation, and TTS without presenting them as shipped features.
 
 `PRIVACY.md` must state that text is sent only to the two configured translation services when submitted, no text/history/telemetry is persisted, credentials stay in Keychain, and the first release requests no protected macOS permissions.
@@ -3809,7 +3822,10 @@ Run `bash scripts/measure-memory.sh` on a clean login session and record the mod
 7. 500 open/close cycles under Instruments Leaks;
 8. 200 stub translations under Instruments Allocations;
 9. warm popover open under 100 ms measured with Points of Interest; and
-10. no Accessibility, Screen Recording, Microphone, or Automation prompt.
+10. no Accessibility, Screen Recording, Microphone, or Automation prompt;
+11. file-based Keychain round trips in an ad-hoc application bundle and no API key appears in `UserDefaults`;
+12. `package-release.sh` emits an application ZIP and matching `SHA256SUMS`, and checksum verification succeeds after extracting into a clean temporary directory; and
+13. the documented Gatekeeper recovery uses only the per-application Open Anyway flow.
 
 - [ ] **Step 6: Run the complete verification matrix**
 
@@ -3820,6 +3836,8 @@ swift test
 swift build -c release
 bash scripts/verify-bundle.sh
 bash scripts/measure-memory.sh
+SIGNING_MODE=adhoc bash scripts/package-release.sh
+shasum -a 256 -c build/release/SHA256SUMS
 git diff --check
 ```
 
@@ -3828,6 +3846,7 @@ Expected:
 - all unit, component, integration, security, and stress tests PASS;
 - release build succeeds;
 - bundle verification succeeds and contains no protected-resource usage keys;
+- the ad-hoc release ZIP and `SHA256SUMS` are generated deterministically enough for the checksum to verify, and no secret is present in either artifact;
 - idle RSS is at most 51,200 KB and idle CPU is at most 0.5%; and
 - `git diff --check` reports no whitespace errors.
 
