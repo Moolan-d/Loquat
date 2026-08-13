@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="screenshot1.webp" alt="Loquat translation popover" width="600" />
+  <img src="screenshot1.png" alt="Loquat translation popover" width="600" />
 </p>
 
 <p align="center">
