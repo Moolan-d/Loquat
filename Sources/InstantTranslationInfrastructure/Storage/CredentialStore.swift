@@ -24,6 +24,11 @@ public protocol CredentialStoring: Sendable {
     func delete(_ key: CredentialKey) throws
 }
 
+public enum KeychainBackend: Equatable, Sendable {
+    case fileBased
+    case dataProtection(accessGroup: String)
+}
+
 struct KeychainSecItemResult {
     let status: OSStatus
     let item: Any?
@@ -58,15 +63,25 @@ private struct SystemKeychainSecItemClient: KeychainSecItemClient {
 
 public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendable {
     private let service: String
+    private let backend: KeychainBackend
     private let client: any KeychainSecItemClient
 
-    public init(service: String = "com.instanttranslation.macos.credentials") {
+    public init(
+        service: String = "com.instanttranslation.macos.credentials",
+        backend: KeychainBackend
+    ) {
         self.service = service
+        self.backend = backend
         client = SystemKeychainSecItemClient()
     }
 
-    init(service: String, client: any KeychainSecItemClient) {
+    init(
+        service: String,
+        backend: KeychainBackend,
+        client: any KeychainSecItemClient
+    ) {
         self.service = service
+        self.backend = backend
         self.client = client
     }
 
@@ -130,17 +145,109 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
     }
 
     private func baseQuery(_ key: CredentialKey) -> [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.account,
-            // macOS 非同步项目需显式使用 Data Protection Keychain，才能保证 accessibility 生效。
-            kSecUseDataProtectionKeychain as String: true,
         ]
+        switch backend {
+        case .fileBased:
+            // ad-hoc 宿主没有团队 access group；文件型查询必须省略两项，不能伪造 entitlement。
+            break
+        case .dataProtection(let accessGroup):
+            // 已签名宿主只访问构造时验证过的团队组，禁止遇错后降级到文件型 Keychain。
+            query[kSecUseDataProtectionKeychain as String] = true
+            query[kSecAttrAccessGroup as String] = accessGroup
+        }
+        return query
     }
 }
 
 public enum KeychainError: Error, Equatable, Sendable {
     case invalidData
     case status(OSStatus)
+}
+
+public struct CredentialMigrationError: Error, Equatable, Sendable {
+    public enum Stage: Equatable, Sendable {
+        case destinationRead
+        case sourceRead
+        case destinationWrite
+        case verificationRead
+        case verificationMismatch
+        case sourceDelete
+    }
+
+    public let key: CredentialKey
+    public let stage: Stage
+
+    public init(key: CredentialKey, stage: Stage) {
+        self.key = key
+        self.stage = stage
+    }
+}
+
+public struct CredentialMigrator: Sendable {
+    private let source: any CredentialStoring
+    private let destination: any CredentialStoring
+
+    public init(
+        source: any CredentialStoring,
+        destination: any CredentialStoring
+    ) {
+        self.source = source
+        self.destination = destination
+    }
+
+    public func migrate() throws {
+        try migrate(keys: [.googleAPIKey, .llmAPIKey])
+    }
+
+    func migrate(keys: [CredentialKey]) throws {
+        for key in keys {
+            try migrate(key)
+        }
+    }
+
+    private func migrate(_ key: CredentialKey) throws {
+        let existingDestination: String?
+        do {
+            existingDestination = try destination.read(key)
+        } catch {
+            throw CredentialMigrationError(key: key, stage: .destinationRead)
+        }
+        guard existingDestination == nil else { return }
+
+        let sourceValue: String?
+        do {
+            sourceValue = try source.read(key)
+        } catch {
+            throw CredentialMigrationError(key: key, stage: .sourceRead)
+        }
+        guard let sourceValue else { return }
+
+        do {
+            try destination.write(sourceValue, for: key)
+        } catch {
+            throw CredentialMigrationError(key: key, stage: .destinationWrite)
+        }
+
+        let verifiedValue: String?
+        do {
+            verifiedValue = try destination.read(key)
+        } catch {
+            throw CredentialMigrationError(key: key, stage: .verificationRead)
+        }
+        // 只有逐字节等价的回读通过后才删源；此前任一失败都保留唯一可信副本。
+        guard verifiedValue == sourceValue else {
+            throw CredentialMigrationError(key: key, stage: .verificationMismatch)
+        }
+
+        do {
+            try source.delete(key)
+        } catch {
+            // 此时目标已经验证有效；保留目标并上抛，下一次执行由“目标优先”保证幂等。
+            throw CredentialMigrationError(key: key, stage: .sourceDelete)
+        }
+    }
 }

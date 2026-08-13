@@ -41,9 +41,19 @@ public final class ApplicationContainer {
         self.clipboardSource = clipboardSource
     }
 
-    public static func make() async -> ApplicationContainer {
+    public static func make(
+        credentialConfiguration explicitConfiguration: ApplicationCredentialConfiguration? = nil
+    ) async throws -> ApplicationContainer {
         let preferencesStore = UserDefaultsPreferencesStore()
-        let credentialStore = KeychainCredentialStore()
+        let credentialConfiguration = try explicitConfiguration
+            ?? ApplicationCredentialConfiguration.resolve()
+        let credentialStore = KeychainCredentialStore(
+            backend: credentialConfiguration.backend
+        )
+        if let sourceBackend = credentialConfiguration.migrationSourceBackend {
+            let source = KeychainCredentialStore(backend: sourceBackend)
+            try CredentialMigrator(source: source, destination: credentialStore).migrate()
+        }
         let transport = URLSessionHTTPTransport()
         let google = GoogleTranslationProvider(transport: transport) {
             try credentialStore.read(.googleAPIKey)

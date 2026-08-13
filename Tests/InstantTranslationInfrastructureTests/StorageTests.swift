@@ -35,7 +35,11 @@ final class StorageTests: XCTestCase {
     func testKeychainRoundTripUsesApplicationService() throws {
         let account = Self.makeTestAccount()
         let client = TestSecItemClient()
-        let store = KeychainCredentialStore(service: Self.keychainService, client: client)
+        let store = KeychainCredentialStore(
+            service: Self.keychainService,
+            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
+            client: client
+        )
 
         try store.write("secret-value", for: .custom(account))
 
@@ -45,7 +49,11 @@ final class StorageTests: XCTestCase {
     func testKeychainWritesUseDataProtectionAccessibility() throws {
         let account = Self.makeTestAccount()
         let client = TestSecItemClient()
-        let store = KeychainCredentialStore(service: Self.keychainService, client: client)
+        let store = KeychainCredentialStore(
+            service: Self.keychainService,
+            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
+            client: client
+        )
         try store.write("secret-value", for: .custom(account))
 
         var query = Self.keychainQuery(account: account, useDataProtectionKeychain: true)
@@ -66,7 +74,11 @@ final class StorageTests: XCTestCase {
     func testConcurrentKeychainWritesDoNotThrow() async throws {
         let account = Self.makeTestAccount()
         let client = TestSecItemClient(missingUpdateBarrierCount: 2)
-        let store = KeychainCredentialStore(service: Self.keychainService, client: client)
+        let store = KeychainCredentialStore(
+            service: Self.keychainService,
+            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
+            client: client
+        )
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -91,7 +103,11 @@ final class StorageTests: XCTestCase {
             account: account,
             useDataProtectionKeychain: true
         )
-        let store = KeychainCredentialStore(service: Self.keychainService, client: client)
+        let store = KeychainCredentialStore(
+            service: Self.keychainService,
+            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
+            client: client
+        )
 
         XCTAssertThrowsError(try store.read(.custom(account))) { error in
             XCTAssertEqual(error as? KeychainError, .invalidData)
