@@ -165,7 +165,8 @@ public final class ApplicationContainer {
             shortcutRegistrar: shortcutRegistrar,
             clipboardSource: clipboardSource
         )
-        popover.onWillShow = { [weak container] in
+        // 剪贴板读取只在快捷键唤起时触发（鼠标唤起永不读）；关闭动作不触发。
+        statusBar.onShortcutOpen = { [weak container] in
             container?.prepareClipboard()
         }
         return container
@@ -191,7 +192,7 @@ public final class ApplicationContainer {
     private func prepareClipboard() {
         Task {
             let preferences = await preferencesStore.load()
-            guard preferences.translateClipboardOnOpen else { return }
+            guard preferences.translateClipboardOnShortcut else { return }
             do {
                 let text = try await clipboardSource.read()
                 session.applyClipboardDecision(

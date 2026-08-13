@@ -5,7 +5,6 @@ import OSLog
 public final class TranslationPopoverController: NSObject, NSPopoverDelegate {
     public let popover = NSPopover()
     public let contentController: PopoverContentController
-    public var onWillShow: (@MainActor () -> Void)?
 
     private let focusRequester: any PopoverFocusRequesting
     private let signposter = OSSignposter(
@@ -31,7 +30,6 @@ public final class TranslationPopoverController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            onWillShow?()
             let interval = signposter.beginInterval("PopoverOpen")
             popover.show(
                 relativeTo: button.bounds,

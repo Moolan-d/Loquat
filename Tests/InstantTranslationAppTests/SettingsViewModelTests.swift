@@ -33,7 +33,7 @@ final class SettingsViewModelTests: XCTestCase {
             XCTAssertEqual(model.credentialAccessState, .unavailable)
             XCTAssertEqual(model.googleAPIKey, "")
             XCTAssertEqual(model.llmAPIKey, "")
-            model.translateClipboardOnOpen = true
+            model.translateClipboardOnShortcut = true
 
             do {
                 try await model.save()
@@ -91,7 +91,7 @@ final class SettingsViewModelTests: XCTestCase {
             shortcut: shortcut
         )
         credentials.failNextRead(.googleAPIKey)
-        model.translateClipboardOnOpen = true
+        model.translateClipboardOnShortcut = true
         model.llmBaseURL = "https://api.example.com/v1"
         model.llmModel = "stored-model"
 
@@ -410,7 +410,7 @@ final class SettingsViewModelTests: XCTestCase {
         )
         model.launchAtLogin = true
         model.globalShortcut = Self.newShortcut
-        model.translateClipboardOnOpen = true
+        model.translateClipboardOnShortcut = true
         model.googleAPIKey = " google-key "
         model.llmBaseURL = " https://api.openai.com/v1/ "
         model.llmAPIKey = " llm-key "
@@ -424,7 +424,7 @@ final class SettingsViewModelTests: XCTestCase {
         let stored = await preferences.load()
         XCTAssertTrue(stored.launchAtLogin)
         XCTAssertEqual(stored.globalShortcut, Self.newShortcut)
-        XCTAssertTrue(stored.translateClipboardOnOpen)
+        XCTAssertTrue(stored.translateClipboardOnShortcut)
         XCTAssertEqual(stored.llmBaseURL, "https://api.openai.com/v1")
         XCTAssertEqual(stored.llmModel, "gpt-5-mini")
         XCTAssertEqual(stored.generalPrompt, "general prompt")
@@ -437,6 +437,24 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(appearance.llmBrand, .openAI)
         XCTAssertEqual(model.saveState, .saved)
         XCTAssertNil(model.saveError)
+    }
+
+    func testClearingShortcutAlsoDisablesClipboardOnShortcutOnSave() async throws {
+        let preferences = MemoryPreferencesStore()
+        let model = await makeModel(preferences: preferences)
+
+        model.globalShortcut = Self.newShortcut
+        model.translateClipboardOnShortcut = true
+        try await model.save()
+        var stored = await preferences.load()
+        XCTAssertTrue(stored.translateClipboardOnShortcut)
+
+        // 清空快捷键后再次保存，剪贴板开关被强制关闭，不把失效值写回磁盘。
+        model.globalShortcut = nil
+        try await model.save()
+        stored = await preferences.load()
+        XCTAssertFalse(stored.translateClipboardOnShortcut)
+        XCTAssertFalse(model.translateClipboardOnShortcut)
     }
 
     func testAllowsHTTPForLoopbackLLMEndpoint() async throws {

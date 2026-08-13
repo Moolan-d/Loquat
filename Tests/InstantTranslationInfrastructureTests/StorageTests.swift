@@ -28,7 +28,7 @@ final class StorageTests: XCTestCase {
 
         XCTAssertFalse(preferences.launchAtLogin)
         XCTAssertNil(preferences.globalShortcut)
-        XCTAssertFalse(preferences.translateClipboardOnOpen)
+        XCTAssertFalse(preferences.translateClipboardOnShortcut)
         XCTAssertEqual(preferences.defaultPromptPresetID, .technologyAndRnD)
     }
 
@@ -38,6 +38,7 @@ final class StorageTests: XCTestCase {
         defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
 
         // 旧版本写入的快照没有 provider 开关键；解码必须逐字段回退而不是整体重置。
+        // 旧键 translateClipboardOnOpen 随改名被丢弃，新字段回退到默认 false（接受重置）。
         let legacy = """
         {
           "launchAtLogin": true,
@@ -54,7 +55,7 @@ final class StorageTests: XCTestCase {
         let preferences = await UserDefaultsPreferencesStore(defaults: defaults).load()
 
         XCTAssertTrue(preferences.launchAtLogin)
-        XCTAssertTrue(preferences.translateClipboardOnOpen)
+        XCTAssertFalse(preferences.translateClipboardOnShortcut)
         XCTAssertEqual(preferences.llmBaseURL, "https://api.openai.com/v1")
         XCTAssertEqual(preferences.llmModel, "gpt-4o-mini")
         XCTAssertEqual(preferences.generalPrompt, "legacy general")
@@ -81,6 +82,40 @@ final class StorageTests: XCTestCase {
         XCTAssertFalse(reloaded.googleProviderEnabled)
         XCTAssertTrue(reloaded.llmProviderEnabled)
         XCTAssertEqual(reloaded.llmBaseURL, "https://api.openai.com/v1")
+    }
+
+    func testClipboardOnShortcutSurvivesSaveAndReloadWithShortcut() async throws {
+        let suite = "InstantTranslationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+
+        var preferences = AppPreferences()
+        preferences.globalShortcut = KeyboardShortcut(keyCode: 1, carbonModifiers: 512)
+        preferences.translateClipboardOnShortcut = true
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+        try await store.save(preferences)
+
+        let reloaded = await store.load()
+        XCTAssertTrue(reloaded.translateClipboardOnShortcut)
+    }
+
+    func testClipboardOnShortcutIsClearedWhenNoShortcutOnLoad() async throws {
+        let suite = "InstantTranslationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+
+        // 磁盘上「无快捷键但剪贴板开关为真」违反不变量，加载时规范化为假。
+        let snapshot = """
+        {
+          "translateClipboardOnShortcut": true,
+          "llmBaseURL": "https://api.openai.com/v1",
+          "llmModel": "gpt-4o-mini"
+        }
+        """
+        defaults.set(Data(snapshot.utf8), forKey: "appPreferences")
+
+        let preferences = await UserDefaultsPreferencesStore(defaults: defaults).load()
+        XCTAssertFalse(preferences.translateClipboardOnShortcut)
     }
 
     func testKeychainRoundTripUsesApplicationService() throws {

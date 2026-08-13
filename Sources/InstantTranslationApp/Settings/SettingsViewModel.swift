@@ -101,7 +101,7 @@ extension SettingsSaveError: LocalizedError {
 public final class SettingsViewModel {
     public var launchAtLogin: Bool
     public var globalShortcut: KeyboardShortcut?
-    public var translateClipboardOnOpen: Bool
+    public var translateClipboardOnShortcut: Bool
     public var googleProviderEnabled: Bool
     public var llmProviderEnabled: Bool
     public var llmBaseURL: String
@@ -178,7 +178,7 @@ public final class SettingsViewModel {
     ) {
         launchAtLogin = actualLaunchAtLogin
         globalShortcut = preferences.globalShortcut
-        translateClipboardOnOpen = preferences.translateClipboardOnOpen
+        translateClipboardOnShortcut = preferences.translateClipboardOnShortcut
         googleProviderEnabled = preferences.googleProviderEnabled
         llmProviderEnabled = preferences.llmProviderEnabled
         llmBaseURL = preferences.llmBaseURL
@@ -389,7 +389,9 @@ public final class SettingsViewModel {
         var preferences = AppPreferences()
         preferences.launchAtLogin = launchAtLogin
         preferences.globalShortcut = globalShortcut
-        preferences.translateClipboardOnOpen = translateClipboardOnOpen
+        // 剪贴板读取是快捷键的从属子设置：无快捷键时强制关闭，不把失效的开关写回磁盘。
+        preferences.translateClipboardOnShortcut =
+            globalShortcut != nil && translateClipboardOnShortcut
         preferences.googleProviderEnabled = googleProviderEnabled
         preferences.llmProviderEnabled = llmProviderEnabled
         preferences.llmBaseURL = normalizedBaseURL
@@ -452,7 +454,7 @@ public final class SettingsViewModel {
     private func applySuccessfulSave(_ proposed: ProposedSettings) {
         launchAtLogin = proposed.preferences.launchAtLogin
         globalShortcut = proposed.preferences.globalShortcut
-        translateClipboardOnOpen = proposed.preferences.translateClipboardOnOpen
+        translateClipboardOnShortcut = proposed.preferences.translateClipboardOnShortcut
         googleProviderEnabled = proposed.preferences.googleProviderEnabled
         llmProviderEnabled = proposed.preferences.llmProviderEnabled
         llmBaseURL = proposed.llmBaseURL

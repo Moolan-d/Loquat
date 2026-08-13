@@ -230,11 +230,11 @@ Submitting different input cancels both tasks from the preceding session and inc
 
 Opening the popover again with unchanged input and already completed results does not resend requests. A user-explicit retry resends only the selected failed provider.
 
-### 7.3 Clipboard-on-open
+### 7.3 Clipboard-on-shortcut
 
-The clipboard-on-open option is disabled by default. When enabled:
+The clipboard-on-shortcut option is disabled by default and is a dependent sub-setting of the global shortcut: it only appears in Settings when a shortcut is configured, and clearing the shortcut also turns it off. When enabled:
 
-- every popover opening reads the latest pasteboard value if it is plain text;
+- only opening the popover via the global shortcut reads the latest pasteboard value if it is plain text; opening via a menu-bar click never reads the clipboard;
 - images, file lists, URLs represented only as objects, and other non-text values are ignored;
 - surrounding whitespace is trimmed while internal whitespace is preserved;
 - empty text is ignored;
@@ -242,6 +242,8 @@ The clipboard-on-open option is disabled by default. When enabled:
 - eligible new text is inserted and translated immediately.
 
 To prevent accidental API spending on copied documents, text longer than 500 Unicode characters is inserted but not automatically submitted. The UI explains that the automatic limit was reached and requires the user to press Enter. Manual input is not capped at 500 characters; it remains subject to provider limits.
+
+Reading the clipboard only on shortcut invocation (and never on a menu-bar click) keeps ordinary copy operations from silently triggering paid translation requests.
 
 ### 7.4 Direction detection
 
@@ -358,7 +360,7 @@ Unit tests cover:
 
 Network integration tests use local stub transports and consume no real API quota. They cover parallel completion in either order, partial failure, missing configuration, 401/403, 429, offline, timeout, cancellation, late responses, invalid JSON, and LLM plain-text fallback.
 
-UI tests cover menu-bar opening, immediate focus, outside-click dismissal, direction override, independent copy actions and success feedback, clipboard-on-open behavior, and settings persistence.
+UI tests cover menu-bar opening, immediate focus, outside-click dismissal, direction override, independent copy actions and success feedback, clipboard-on-shortcut behavior, and settings persistence.
 
 Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the exact query shape for file-based and Data Protection Keychain modes, verify there is no runtime fallback, and cover read-verified migration without requiring a provisioned XCTest host. Signed-mode live Keychain access remains a verification gate for a genuinely provisioned application bundle.
 

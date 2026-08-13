@@ -220,7 +220,7 @@ struct SettingsViewActions {
 /// 避免依赖 SwiftUI 私有的 AppKit 视图层级。
 enum SettingsControlID: String, CaseIterable, Hashable {
     case launchAtLogin
-    case clipboardOnOpen
+    case clipboardOnShortcut
     case globalShortcut
     case credentialStatus
     case reloadCredentials
@@ -279,7 +279,7 @@ struct SettingsViewRegistry {
     var controls: [SettingsControlDescriptor] {
         // 显式清单同时决定真实渲染顺序；遗漏条目会被完整性测试捕获。
         let orderedIDs: [SettingsControlID] = [
-            .launchAtLogin, .clipboardOnOpen, .globalShortcut,
+            .launchAtLogin, .globalShortcut, .clipboardOnShortcut,
             .credentialStatus, .reloadCredentials, .connectionWarning,
             .googleEnabled, .googleAPIKey, .googleTest, .googleStatus,
             .llmEnabled, .llmBaseURL, .llmAPIKey, .llmModel, .llmTest, .llmStatus,
@@ -344,6 +344,9 @@ struct SettingsViewRegistry {
             )
         case .reloadCredentials:
             return common.replacing(isVisible: policy.showsCredentialReload)
+        case .clipboardOnShortcut:
+            // 剪贴板读取是快捷键的从属子设置：未录快捷键时整行隐藏。
+            return common.replacing(isVisible: model.globalShortcut != nil)
         case .googleEnabled:
             return common.replacing(value: policy.googleProviderEnabled ? "On" : "Off")
         case .llmEnabled:
@@ -406,10 +409,10 @@ struct SettingsViewRegistry {
         switch id {
         case .launchAtLogin:
             metadata = (.general, "Launch Loquat at login")
-        case .clipboardOnOpen:
+        case .clipboardOnShortcut:
             metadata = (
                 .general,
-                "Translate latest clipboard content when popover opens"
+                "Translate clipboard when opened by shortcut"
             )
         case .globalShortcut:
             metadata = (.general, "Global translation shortcut")
@@ -658,11 +661,12 @@ public struct SettingsView: View {
         case .launchAtLogin:
             Toggle("Launch at Login", isOn: $model.launchAtLogin)
                 .accessibilityLabel(descriptor.accessibilityLabel)
-        case .clipboardOnOpen:
+        case .clipboardOnShortcut:
             Toggle(
-                "Translate Latest Clipboard Content on Open",
-                isOn: $model.translateClipboardOnOpen
+                "Translate Clipboard When Opened by Shortcut",
+                isOn: $model.translateClipboardOnShortcut
             )
+            .padding(.leading, 20)
             .accessibilityLabel(descriptor.accessibilityLabel)
         case .globalShortcut:
             LabeledContent("Global Shortcut") {

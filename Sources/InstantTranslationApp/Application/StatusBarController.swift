@@ -8,6 +8,9 @@ public final class StatusBarController {
     private let popoverController: TranslationPopoverController
     private let shortcutRegistrar: GlobalShortcutRegistering
 
+    /// 快捷键唤起且弹窗尚未显示时调用（鼠标唤起不调、关闭动作不调）。
+    public var onShortcutOpen: (@MainActor () -> Void)?
+
     public init(
         popoverController: TranslationPopoverController,
         shortcutRegistrar: GlobalShortcutRegistering
@@ -28,6 +31,9 @@ public final class StatusBarController {
 
     public func toggleFromShortcut() {
         guard let button = statusItem.button else { return }
+        if !popoverController.popover.isShown {
+            onShortcutOpen?()
+        }
         popoverController.toggle(relativeTo: button)
     }
 

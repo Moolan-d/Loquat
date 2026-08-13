@@ -14,7 +14,7 @@ public struct KeyboardShortcut: Codable, Equatable, Sendable {
 public struct AppPreferences: Codable, Equatable, Sendable {
     public var launchAtLogin = false
     public var globalShortcut: KeyboardShortcut?
-    public var translateClipboardOnOpen = false
+    public var translateClipboardOnShortcut = false
     public var googleProviderEnabled = true
     public var llmProviderEnabled = true
     public var llmBaseURL = ""
@@ -38,9 +38,9 @@ public struct AppPreferences: Codable, Equatable, Sendable {
             KeyboardShortcut.self,
             forKey: .globalShortcut
         )
-        translateClipboardOnOpen = value(
-            .translateClipboardOnOpen,
-            defaults.translateClipboardOnOpen
+        translateClipboardOnShortcut = value(
+            .translateClipboardOnShortcut,
+            defaults.translateClipboardOnShortcut
         )
         googleProviderEnabled = value(.googleProviderEnabled, defaults.googleProviderEnabled)
         llmProviderEnabled = value(.llmProviderEnabled, defaults.llmProviderEnabled)
@@ -55,6 +55,10 @@ public struct AppPreferences: Codable, Equatable, Sendable {
             .defaultPromptPresetID,
             defaults.defaultPromptPresetID
         )
+        // 剪贴板读取只在快捷键唤起时发生；磁盘上「无快捷键但开关为真」的历史数据在此规范化为假。
+        if globalShortcut == nil {
+            translateClipboardOnShortcut = false
+        }
     }
 }
 

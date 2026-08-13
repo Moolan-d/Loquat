@@ -291,7 +291,7 @@ final class SettingsPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             Set(registry.controls.filter { $0.group == .general }.map(\.id)),
-            [.launchAtLogin, .clipboardOnOpen, .globalShortcut]
+            [.launchAtLogin, .globalShortcut, .clipboardOnShortcut]
         )
         XCTAssertEqual(
             Set(registry.controls.filter { $0.group == .translationServices }.map(\.id)),
@@ -793,6 +793,18 @@ final class SettingsPresentationTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
 
         XCTAssertFalse(allSubviews(of: host).contains { $0 is NSPopUpButton })
+    }
+
+    func testClipboardOnShortcutControlOnlyShowsWhenShortcutIsConfigured() async {
+        let model = await makeModel()
+
+        // 默认无快捷键：剪贴板从属子设置隐藏。
+        let noShortcut = SettingsViewRegistry(model: model)
+        XCTAssertFalse(noShortcut.control(.clipboardOnShortcut).isVisible)
+
+        model.globalShortcut = KeyboardShortcut(keyCode: 1, carbonModifiers: 512)
+        let withShortcut = SettingsViewRegistry(model: model)
+        XCTAssertTrue(withShortcut.control(.clipboardOnShortcut).isVisible)
     }
 
     private func makeModel(
