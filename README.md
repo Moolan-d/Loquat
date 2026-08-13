@@ -61,6 +61,12 @@
 - **Small and native** — pure Swift, no Electron, no WebView.
 - **Fail independently** — one provider's error never invalidates the other's successful result.
 
+## Performance
+
+- **Download size** — `Loquat-macOS.zip` is ~1.4 MB.
+- **Installed size** — ~3 MB unpacked.
+- **Idle memory** — ≤ 50 MB per-process physical footprint, ~0% idle CPU (verified by the release gate).
+
 ## Installation
 
 1. Download `Loquat-macOS.zip` from [GitHub Releases](https://github.com/Moolan-d/Loquat/releases).
@@ -71,17 +77,25 @@
 
 1. Click the menu-bar icon, right-click → **Settings** (or press `⌘,`).
 2. Add at least one provider:
-   - **Google** — paste a Google Cloud Translation API key.
-   - **LLM** — paste an API key, Base URL, and model name (e.g. OpenAI, DeepSeek, OpenRouter).
+   - **Google** — paste (right-click) a Google Cloud Translation API key.
+   - **LLM** — paste (right-click) an API key, Base URL, and model name (e.g. OpenAI, DeepSeek, OpenRouter).
 3. Record a global shortcut.
 4. (Optional) enable **Translate Clipboard When Opened by Shortcut** — it appears once a shortcut is set.
 5. Press the shortcut to open the popover, then type, or let the clipboard fill it in.
+
+### Getting a Google Cloud Translation API key
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) and create or select a project.
+2. Enable the **Cloud Translation API** (requires a billing account).
+3. Open **APIs & Services → Credentials → Create credentials → API key**.
+4. (Recommended) restrict the key to the Cloud Translation API.
+5. Copy the key and paste (right-click) it into **Loquat → Settings → Google → API Key**.
 
 ### Shortcuts
 
 | Action        | Shortcut                                    |
 | ------------- | ------------------------------------------- |
-| Open popover  | your global shortcut (set in Settings)      |
+| Open popover  | your global shortcut (set in Settings; the Delete key clears it) |
 | Open Settings | right-click the menu-bar icon → Settings    |
 
 ## FAQ
@@ -97,6 +111,13 @@ xattr -cr /Applications/Loquat.app
 ### Where are my API keys stored?
 
 In the macOS Keychain, under `com.instanttranslation.macos.credentials`. They are never written to `UserDefaults`, logs, or request URLs.
+
+### First-launch authorization prompts
+
+On first launch, macOS may show two permission dialogs:
+
+- **Keychain** — Loquat stores your API keys there. Choose **Allow** or **Always Allow** so the app can save and read them.
+- **Documents access** — macOS may ask Loquat to access your files. Allow it so the app can work normally.
 
 ## Development
 
