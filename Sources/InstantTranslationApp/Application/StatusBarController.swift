@@ -17,7 +17,7 @@ public final class StatusBarController {
 
         let image = NSImage(
             systemSymbolName: "character.bubble.fill",
-            accessibilityDescription: "Instant Translation"
+            accessibilityDescription: "Loquat"
         )
         image?.isTemplate = true
         statusItem.button?.image = image
@@ -43,7 +43,7 @@ public final class StatusBarController {
             settings.target = self
             menu.addItem(.separator())
             let quit = menu.addItem(
-                withTitle: "Quit Instant Translation",
+                withTitle: "Quit Loquat",
                 action: #selector(NSApplication.terminate(_:)),
                 keyEquivalent: "q"
             )

@@ -333,7 +333,7 @@ final class SettingsPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             registry.control(.launchAtLogin).accessibilityLabel,
-            "Launch Instant Translation at login"
+            "Launch Loquat at login"
         )
         XCTAssertEqual(
             registry.control(.googleAPIKey).accessibilityLabel,

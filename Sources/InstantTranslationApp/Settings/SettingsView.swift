@@ -405,7 +405,7 @@ struct SettingsViewRegistry {
         let metadata: (group: SettingsFunctionalGroup?, accessibilityLabel: String)
         switch id {
         case .launchAtLogin:
-            metadata = (.general, "Launch Instant Translation at login")
+            metadata = (.general, "Launch Loquat at login")
         case .clipboardOnOpen:
             metadata = (
                 .general,

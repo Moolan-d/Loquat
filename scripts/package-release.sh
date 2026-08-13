@@ -23,7 +23,7 @@ if [[ ! -d "$APP" ]]; then
 fi
 
 RELEASE_DIR="$BUILD_ROOT/release"
-ZIP_NAME="InstantTranslation-macOS.zip"
+ZIP_NAME="Loquat-macOS.zip"
 mkdir -p "$RELEASE_DIR"
 rm -f "$RELEASE_DIR/$ZIP_NAME" "$RELEASE_DIR/SHA256SUMS"
 

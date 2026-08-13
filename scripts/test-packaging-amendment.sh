@@ -40,7 +40,7 @@ assert_fails_with \
     "signed mode requires the verified keychain access group" \
     "$ROOT/scripts/materialize-signing-info.sh" signed "$PLIST"
 
-FAKE_APP="$TEMP_ROOT/InstantTranslation.app"
+FAKE_APP="$TEMP_ROOT/Loquat.app"
 mkdir -p "$FAKE_APP/Contents/MacOS"
 printf 'fixture executable\n' >"$FAKE_APP/Contents/MacOS/InstantTranslation"
 xattr -w com.instanttranslation.packaging-fixture present \
@@ -61,12 +61,12 @@ INSTANT_TRANSLATION_PACKAGE_APP_SCRIPT="$FAKE_PACKAGE_APP" \
     "$ROOT/scripts/package-release.sh" >/dev/null
 
 RELEASE_DIR="$BUILD_ROOT/release"
-[[ -f "$RELEASE_DIR/InstantTranslation-macOS.zip" ]]
+[[ -f "$RELEASE_DIR/Loquat-macOS.zip" ]]
 [[ -f "$RELEASE_DIR/SHA256SUMS" ]]
 (cd "$RELEASE_DIR" && shasum -a 256 -c SHA256SUMS)
-[[ "$(unzip -Z1 "$RELEASE_DIR/InstantTranslation-macOS.zip" | head -1)" \
-    == "InstantTranslation.app/" ]]
-if unzip -Z1 "$RELEASE_DIR/InstantTranslation-macOS.zip" \
+[[ "$(unzip -Z1 "$RELEASE_DIR/Loquat-macOS.zip" | head -1)" \
+    == "Loquat.app/" ]]
+if unzip -Z1 "$RELEASE_DIR/Loquat-macOS.zip" \
     | grep -Eq '(^|/)(\._|__MACOSX)'; then
     fail "release contains AppleDouble or resource-fork metadata"
 fi

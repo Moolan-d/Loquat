@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="${1:-build/InstantTranslation.app}"
+APP="${1:-build/Loquat.app}"
 TEAM="${2:-${DEVELOPMENT_TEAM:-}}"
 
 if [[ -z "$TEAM" ]]; then

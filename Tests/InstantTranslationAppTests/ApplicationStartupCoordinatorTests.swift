@@ -24,7 +24,7 @@ final class ApplicationStartupCoordinatorTests: XCTestCase {
         XCTAssertEqual(presentation.title, "Credential Storage Unavailable")
         XCTAssertEqual(
             presentation.message,
-            "Instant Translation could not open or migrate credentials safely. Retry, or quit the app."
+            "Loquat could not open or migrate credentials safely. Retry, or quit the app."
         )
         XCTAssertFalse(presentation.message.contains("-34018"))
         XCTAssertFalse(presentation.message.contains("TEAM123"))

@@ -104,7 +104,7 @@ public final class SettingsWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Instant Translation Settings"
+        window.title = "Loquat Settings"
         window.isReleasedWhenClosed = false
         window.center()
         window.contentView = NSHostingView(rootView: SettingsView(model: model))
@@ -128,7 +128,7 @@ public final class SettingsWindowController: NSWindowController {
         applicationMenu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quit Instant Translation",
+            title: "Quit Loquat",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )

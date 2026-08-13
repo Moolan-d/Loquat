@@ -59,7 +59,7 @@ esac
 
 swift build --disable-sandbox -c release
 BIN_DIR="$(swift build --disable-sandbox -c release --show-bin-path)"
-APP="$BUILD_ROOT/InstantTranslation.app"
+APP="$BUILD_ROOT/Loquat.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/InstantTranslation" "$APP/Contents/MacOS/InstantTranslation"

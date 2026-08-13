@@ -8,7 +8,7 @@ public enum ApplicationStartupFailure: Equatable, Sendable {
         case .credentialStorageUnavailable:
             ApplicationStartupFailurePresentation(
                 title: "Credential Storage Unavailable",
-                message: "Instant Translation could not open or migrate credentials safely. Retry, or quit the app."
+                message: "Loquat could not open or migrate credentials safely. Retry, or quit the app."
             )
         }
     }
