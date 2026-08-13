@@ -109,6 +109,32 @@ final class AppShellTests: XCTestCase {
         XCTAssertNil(text)
     }
 
+    func testFiveHundredPopoverControllerConstructionsReleaseContent() async {
+        var references: [WeakBox<PopoverContentController>] = []
+
+        for _ in 0..<500 {
+            autoreleasepool {
+                let controller = TranslationPopoverController(
+                    contentView: NSView(),
+                    focusRequester: TranslationInputFocusController()
+                )
+                references.append(WeakBox(controller.contentController))
+            }
+        }
+
+        // preferredContentSize 的通知由 AppKit 合并到下一轮主 RunLoop；出队后再判断长期保留。
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform {
+                continuation.resume()
+            }
+        }
+
+        XCTAssertTrue(
+            references.allSatisfy { $0.value == nil },
+            "Popover controller lifecycle must not retain released content controllers"
+        )
+    }
+
     private func assertFirstResponder(
         _ input: NSTextField,
         in window: NSWindow,
@@ -138,6 +164,14 @@ final class AppShellTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+}
+
+private final class WeakBox<Value: AnyObject> {
+    weak var value: Value?
+
+    init(_ value: Value) {
+        self.value = value
     }
 }
 
