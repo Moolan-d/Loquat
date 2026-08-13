@@ -1,4 +1,7 @@
-<h1 align="center">Loquat</h1>
+<h1 align="center">
+  <img src="logoA.webp" alt="" width="44" height="44" align="middle" valign="middle" />
+  &nbsp;Loquat
+</h1>
 
 <p align="center">
   A lightweight, native macOS menu bar translator.<br/>
@@ -23,31 +26,12 @@
 
 ## Features
 
-### Translation
-
 - **Instant popover** — a global shortcut opens a warm, focused popover from the menu bar; the result appears without switching apps.
-- **Two engines in parallel** — Google Translate and any OpenAI-compatible LLM (OpenAI, DeepSeek, OpenRouter, or a self-hosted endpoint). Each provider translates, succeeds, fails, and retries independently, so one error never hides the other's result.
-- **Smart direction detection** — Han-script input resolves to Chinese → English, everything else to English → Chinese. Override or swap the direction with one click.
-
-### Input
-
-- **Manual input** — type or paste anything, any time.
-- **Clipboard on shortcut** — opening the popover via the global shortcut can read the clipboard automatically. Text up to 500 characters translates immediately; longer text is filled in and waits for you to press Enter, so you never spend API quota by accident.
-- **Menu-bar clicks never read the clipboard** — ordinary copies stay ordinary.
-
-### Settings
-
-- Custom global shortcut (record any key combination).
-- Providers grouped into **Google** and **LLM**, each with a visibility switch for the translation window.
-- Per-provider connection tests.
-- LLM prompt presets (General / Technology & R&D).
-- Launch at login.
-
-### Privacy
-
-- API keys live in the macOS **Keychain only** — never in preferences, logs, or request URLs.
-- No analytics, no telemetry, no third-party runtime dependencies.
-- Remote LLM endpoints must use HTTPS (localhost is allowed for local models).
+- **Two engines in parallel** — Google Translate plus any OpenAI-compatible LLM (OpenAI, DeepSeek, OpenRouter, or a self-hosted endpoint), each **translating, failing, and retrying independently**.
+- **Smart direction detection** — Han-script input resolves to Chinese → English, everything else to English → Chinese; override or swap with one click.
+- **Clipboard read only when you ask** — only the shortcut reads it: up to 500 characters translates immediately, longer text waits for your Enter; **menu-bar clicks never read the clipboard**.
+- **Settings that cover it** — custom shortcut, Google / LLM groups each with a translation-window visibility switch, per-provider connection tests, LLM prompt presets, launch at login.
+- **Keys in the Keychain only** — never in preferences, logs, or request URLs; no analytics, no telemetry; remote LLM endpoints must use HTTPS (localhost allowed for local models).
 
 ## Config Screenshots
 
@@ -57,15 +41,9 @@
 
 ## Why Loquat
 
-- **Clipboard reads only when you ask for them** — binding clipboard translation to the shortcut keeps unrelated copies from triggering paid requests.
-- **Small and native** — pure Swift, no Electron, no WebView.
-- **Fail independently** — one provider's error never invalidates the other's successful result.
-
-## Performance
-
-- **Download size** — `Loquat-macOS.zip` is ~1.4 MB.
-- **Installed size** — ~3 MB unpacked.
-- **Idle memory** — ≤ 50 MB per-process physical footprint, ~0% idle CPU (verified by the release gate).
+- **Small and native** — pure Swift, no Electron, no WebView: **~1.4 MB** to download, **~3 MB** installed, **≤ 50 MB** idle physical memory and ~0% idle CPU (verified by the release gate).
+- **Spends nothing behind your back** — clipboard translation is bound to the shortcut, so unrelated copies never trigger a paid request.
+- **One failure isn't total failure** — one provider's error never invalidates what the other already returned.
 
 ## Installation
 
