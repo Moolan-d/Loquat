@@ -13,6 +13,8 @@ public final class ApplicationContainer {
     public let providerAppearance: ProviderAppearance
     public let statusBarController: StatusBarController
     public let popoverController: TranslationPopoverController
+    public let settingsViewModel: SettingsViewModel
+    public let settingsWindowController: SettingsWindowController
 
     private let shortcutRegistrar: GlobalShortcutRegistering
     private let clipboardSource: any InputSource
@@ -28,6 +30,8 @@ public final class ApplicationContainer {
         providerAppearance: ProviderAppearance,
         statusBarController: StatusBarController,
         popoverController: TranslationPopoverController,
+        settingsViewModel: SettingsViewModel,
+        settingsWindowController: SettingsWindowController,
         shortcutRegistrar: GlobalShortcutRegistering,
         clipboardSource: any InputSource
     ) {
@@ -37,6 +41,8 @@ public final class ApplicationContainer {
         self.providerAppearance = providerAppearance
         self.statusBarController = statusBarController
         self.popoverController = popoverController
+        self.settingsViewModel = settingsViewModel
+        self.settingsWindowController = settingsWindowController
         self.shortcutRegistrar = shortcutRegistrar
         self.clipboardSource = clipboardSource
     }
@@ -54,7 +60,24 @@ public final class ApplicationContainer {
             let source = KeychainCredentialStore(backend: sourceBackend)
             try CredentialMigrator(source: source, destination: credentialStore).migrate()
         }
-        let transport = URLSessionHTTPTransport()
+        return await make(
+            preferencesStore: preferencesStore,
+            credentialStore: credentialStore,
+            transport: URLSessionHTTPTransport(),
+            launchAtLogin: LaunchAtLoginController(),
+            shortcutRegistrar: CarbonGlobalShortcutRegistrar(),
+            clipboardSource: ClipboardInputSource()
+        )
+    }
+
+    static func make(
+        preferencesStore: any PreferencesStoring,
+        credentialStore: any CredentialStoring,
+        transport: any HTTPTransport,
+        launchAtLogin: LaunchAtLoginControlling,
+        shortcutRegistrar: GlobalShortcutRegistering,
+        clipboardSource: any InputSource
+    ) async -> ApplicationContainer {
         let google = GoogleTranslationProvider(transport: transport) {
             try credentialStore.read(.googleAPIKey)
         }
@@ -98,11 +121,23 @@ public final class ApplicationContainer {
             contentView: content,
             focusRequester: focusController
         )
-        let shortcut = CarbonGlobalShortcutRegistrar()
         let statusBar = StatusBarController(
             popoverController: popover,
-            shortcutRegistrar: shortcut
+            shortcutRegistrar: shortcutRegistrar
         )
+        let settingsViewModel = await SettingsViewModel.make(
+            preferencesStore: preferencesStore,
+            credentialStore: credentialStore,
+            launchAtLogin: launchAtLogin,
+            shortcutRegistrar: shortcutRegistrar,
+            shortcutAction: { [weak statusBar] in
+                statusBar?.toggleFromShortcut()
+            },
+            connectionTester: ProviderConnectionTester(transport: transport),
+            providerAppearance: appearance,
+            session: session
+        )
+        let settingsWindowController = SettingsWindowController(model: settingsViewModel)
         let container = ApplicationContainer(
             session: session,
             preferencesStore: preferencesStore,
@@ -110,8 +145,10 @@ public final class ApplicationContainer {
             providerAppearance: appearance,
             statusBarController: statusBar,
             popoverController: popover,
-            shortcutRegistrar: shortcut,
-            clipboardSource: ClipboardInputSource()
+            settingsViewModel: settingsViewModel,
+            settingsWindowController: settingsWindowController,
+            shortcutRegistrar: shortcutRegistrar,
+            clipboardSource: clipboardSource
         )
         popover.onWillShow = { [weak container] in
             container?.prepareClipboard()
