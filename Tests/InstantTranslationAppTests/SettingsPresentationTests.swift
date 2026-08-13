@@ -456,29 +456,35 @@ final class SettingsPresentationTests: XCTestCase {
         controller.window?.orderOut(nil)
     }
 
-    func testConcurrentOpenNotificationsConstructOneSettingsWindow() async {
+    func testReentrantOpenNotificationDuringConstructionCoalescesOnePresentation() async {
         let center = NotificationCenter()
         var constructionCount = 0
+        var postedNestedOpen = false
+        var activationCount = 0
         var orderedWindows: [NSWindow] = []
         let controller = SettingsWindowController(
             model: await makeModel(),
             notificationCenter: center,
-            activateApplication: {},
+            activateApplication: { activationCount += 1 },
             orderWindowFront: { window, _ in orderedWindows.append(window) },
             installApplicationMenu: false,
             makeWindow: { model in
                 constructionCount += 1
+                if !postedNestedOpen {
+                    postedNestedOpen = true
+                    center.post(name: .openInstantTranslationSettings, object: nil)
+                }
                 return SettingsWindowController.makeProductionWindow(model: model)
             }
         )
 
-        center.post(name: .openInstantTranslationSettings, object: nil)
-        center.post(name: .openInstantTranslationSettings, object: nil)
+        controller.showSettings(nil)
 
         XCTAssertTrue(controller.isSettingsWindowConstructed)
         XCTAssertEqual(constructionCount, 1)
-        XCTAssertEqual(orderedWindows.count, 2)
-        XCTAssertTrue(orderedWindows.dropFirst().allSatisfy { $0 === orderedWindows.first })
+        XCTAssertEqual(activationCount, 1)
+        XCTAssertEqual(orderedWindows.count, 1)
+        XCTAssertTrue(orderedWindows.first === controller.window)
         controller.window?.orderOut(nil)
     }
 

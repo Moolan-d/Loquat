@@ -9,9 +9,11 @@ public final class SettingsWindowController: NSWindowController {
     private let activateApplication: @MainActor () -> Void
     private let orderWindowFront: @MainActor (NSWindow, Any?) -> Void
     private let makeWindow: @MainActor (SettingsViewModel) -> NSWindow
+    private var retainedSettingsWindow: NSWindow?
+    private var isConstructingSettingsWindow = false
+    private var isSettingsPresentationPending = false
 
-    // `NSWindowController.isWindowLoaded` 在以 nil 窗口初始化时仍可能为真，直接观察窗口实例。
-    var isSettingsWindowConstructed: Bool { window != nil }
+    var isSettingsWindowConstructed: Bool { retainedSettingsWindow != nil }
 
     public convenience init(model: SettingsViewModel) {
         self.init(model: model, installApplicationMenu: true)
@@ -64,23 +66,35 @@ public final class SettingsWindowController: NSWindowController {
     }
 
     @objc public func showSettings(_ sender: Any?) {
-        let window = ensureWindow()
+        if isConstructingSettingsWindow {
+            // 构造期间的同步重入只登记一次展示；窗口发布后由外层调用统一完成。
+            isSettingsPresentationPending = true
+            return
+        }
+        if let retainedSettingsWindow {
+            presentSettingsWindow(retainedSettingsWindow, sender: sender)
+            return
+        }
+
+        isConstructingSettingsWindow = true
+        isSettingsPresentationPending = true
+        let created = makeWindow(model)
+        retainedSettingsWindow = created
+        window = created
+        isConstructingSettingsWindow = false
+
+        guard isSettingsPresentationPending else { return }
+        isSettingsPresentationPending = false
+        presentSettingsWindow(created, sender: sender)
+    }
+
+    private func presentSettingsWindow(_ window: NSWindow, sender: Any?) {
         activateApplication()
         orderWindowFront(window, sender)
     }
 
     @objc private func openSettingsNotification(_ notification: Notification) {
         showSettings(nil)
-    }
-
-    private func ensureWindow() -> NSWindow {
-        if isWindowLoaded, let window {
-            return window
-        }
-        // Settings 视图树在首次实际打开时创建；关闭后仍复用同一窗口和模型。
-        let created = makeWindow(model)
-        window = created
-        return created
     }
 
     static func makeProductionWindow(model: SettingsViewModel) -> NSWindow {
