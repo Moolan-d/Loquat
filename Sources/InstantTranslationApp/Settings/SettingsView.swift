@@ -1,11 +1,23 @@
 import AppKit
 import SwiftUI
 import InstantTranslationCore
+import InstantTranslationInfrastructure
 
 enum SettingsFunctionalGroup: Hashable {
     case general
     case translationServices
+    case googleService
+    case llmService
     case llmPrompts
+
+    /// 二级模块的标题、开关与品牌图标成对出现，放在一起避免视图里散落映射。
+    var providerSwitch: (title: String, controlID: SettingsControlID, providerID: ProviderID)? {
+        switch self {
+        case .googleService: ("Google", .googleEnabled, .google)
+        case .llmService: ("LLM", .llmEnabled, .llm)
+        default: nil
+        }
+    }
 }
 
 enum SettingsStatusEmphasis: Equatable {
@@ -24,18 +36,65 @@ struct SettingsPresentationPolicy {
     static let functionalGroups: [SettingsFunctionalGroup] = [
         .general,
         .translationServices,
+        .googleService,
+        .llmService,
         .llmPrompts,
     ]
+
+    /// Google 与 LLM 是 Translation Services 的二级模块，不再各自成节：
+    /// 独立成节时关闭分组会让空 Section 与下一个节标题挤在一起，标题被压小。
+    static let sectionGroups: [SettingsFunctionalGroup] = [
+        .general,
+        .translationServices,
+        .llmPrompts,
+    ]
+
+    /// 二级模块按此顺序内嵌在 Translation Services 里。
+    static let providerGroups: [SettingsFunctionalGroup] = [
+        .googleService,
+        .llmService,
+    ]
+
+    /// 卡片副标题直接说明开关的后果：关闭只是不在翻译窗口出现，配置原样保留。
+    static func providerVisibilityCaption(isVisible: Bool) -> String {
+        isVisible
+            ? "Shown in the translation window"
+            : "Hidden from the translation window — settings are kept"
+    }
+
+    /// 二级模块的字段标签由卡片统一渲染成一列以便对齐，控件自带的标签用 labelsHidden 收起。
+    /// 返回 nil 表示该控件横跨整行（按钮、状态行），没有标签列。
+    static func providerFieldLabel(_ id: SettingsControlID) -> String? {
+        switch id {
+        case .googleAPIKey, .llmAPIKey: "API Key"
+        case .llmBaseURL: "Base URL"
+        case .llmModel: "Model"
+        default: nil
+        }
+    }
 
     let credentialAccessState: CredentialAccessState
     let saveState: SettingsSaveState
     let saveError: String?
+    let googleProviderEnabled: Bool
+    let llmProviderEnabled: Bool
 
     @MainActor
     init(model: SettingsViewModel) {
         credentialAccessState = model.credentialAccessState
         saveState = model.saveState
         saveError = model.saveError
+        googleProviderEnabled = model.googleProviderEnabled
+        llmProviderEnabled = model.llmProviderEnabled
+    }
+
+    /// 分组开关只控制条目与配置项的可见性；关闭时保留模型里的凭据与参数，保存后依然回写原值。
+    func showsDetails(for group: SettingsFunctionalGroup) -> Bool {
+        switch group {
+        case .googleService: googleProviderEnabled
+        case .llmService: llmProviderEnabled
+        default: true
+        }
     }
 
     var credentialsEditable: Bool {
@@ -165,15 +224,17 @@ enum SettingsControlID: String, CaseIterable, Hashable {
     case globalShortcut
     case credentialStatus
     case reloadCredentials
+    case connectionWarning
+    case googleEnabled
     case googleAPIKey
     case googleTest
     case googleStatus
+    case llmEnabled
     case llmBaseURL
     case llmAPIKey
     case llmModel
     case llmTest
     case llmStatus
-    case connectionWarning
     case promptPreset
     case generalPrompt
     case restoreGeneralPrompt
@@ -207,18 +268,37 @@ struct SettingsViewRegistry {
         SettingsPresentationPolicy.functionalGroups
     }
 
+    var sectionGroups: [SettingsFunctionalGroup] {
+        SettingsPresentationPolicy.sectionGroups
+    }
+
+    var providerGroups: [SettingsFunctionalGroup] {
+        SettingsPresentationPolicy.providerGroups
+    }
+
     var controls: [SettingsControlDescriptor] {
         // 显式清单同时决定真实渲染顺序；遗漏条目会被完整性测试捕获。
         let orderedIDs: [SettingsControlID] = [
             .launchAtLogin, .clipboardOnOpen, .globalShortcut,
-            .credentialStatus, .reloadCredentials, .googleAPIKey, .googleTest,
-            .googleStatus, .llmBaseURL, .llmAPIKey, .llmModel, .llmTest,
-            .llmStatus, .connectionWarning,
+            .credentialStatus, .reloadCredentials, .connectionWarning,
+            .googleEnabled, .googleAPIKey, .googleTest, .googleStatus,
+            .llmEnabled, .llmBaseURL, .llmAPIKey, .llmModel, .llmTest, .llmStatus,
             .promptPreset, .generalPrompt, .restoreGeneralPrompt,
             .technologyPrompt, .restoreTechnologyPrompt,
             .saveStatus, .save,
         ]
         return orderedIDs.map(makeDescriptor)
+    }
+
+    /// 分组标题里的开关独立渲染，不参与分组内容列表。
+    static let headerControlIDs: Set<SettingsControlID> = [.googleEnabled, .llmEnabled]
+
+    func bodyControls(in group: SettingsFunctionalGroup) -> [SettingsControlDescriptor] {
+        controls.filter {
+            $0.group == group
+                && $0.isVisible
+                && !Self.headerControlIDs.contains($0.id)
+        }
     }
 
     func control(_ id: SettingsControlID) -> SettingsControlDescriptor {
@@ -251,6 +331,11 @@ struct SettingsViewRegistry {
     private func makeDescriptor(_ id: SettingsControlID) -> SettingsControlDescriptor {
         let policy = SettingsPresentationPolicy(model: model)
         let common = descriptorDefaults(for: id)
+        // 分组开关关闭时整组配置项隐藏，但模型里的值原样保留。
+        let collapsed = common.group.map { !policy.showsDetails(for: $0) } ?? false
+        guard !collapsed || Self.headerControlIDs.contains(id) else {
+            return common.replacing(isVisible: false)
+        }
         switch id {
         case .credentialStatus:
             return common.replacing(
@@ -259,6 +344,10 @@ struct SettingsViewRegistry {
             )
         case .reloadCredentials:
             return common.replacing(isVisible: policy.showsCredentialReload)
+        case .googleEnabled:
+            return common.replacing(value: policy.googleProviderEnabled ? "On" : "Off")
+        case .llmEnabled:
+            return common.replacing(value: policy.llmProviderEnabled ? "On" : "Off")
         case .googleAPIKey, .llmAPIKey:
             return common.replacing(isEnabled: policy.credentialsEditable)
         case .googleTest:
@@ -328,27 +417,31 @@ struct SettingsViewRegistry {
             metadata = (.translationServices, "Credential status")
         case .reloadCredentials:
             metadata = (.translationServices, "Reload credentials from Keychain")
-        case .googleAPIKey:
-            metadata = (.translationServices, "Google Cloud Translation API key")
-        case .googleTest:
-            metadata = (.translationServices, "Test Google translation connection")
-        case .googleStatus:
-            metadata = (.translationServices, "Google connection status")
-        case .llmBaseURL:
-            metadata = (.translationServices, "LLM Base URL")
-        case .llmAPIKey:
-            metadata = (.translationServices, "LLM API key")
-        case .llmModel:
-            metadata = (.translationServices, "LLM model")
-        case .llmTest:
-            metadata = (.translationServices, "Test LLM connection")
-        case .llmStatus:
-            metadata = (.translationServices, "LLM connection status")
         case .connectionWarning:
             metadata = (
                 .translationServices,
                 "Connection test warning: tests send a small real request and may incur provider charges"
             )
+        case .googleEnabled:
+            metadata = (.googleService, "Show Google in the translation window")
+        case .googleAPIKey:
+            metadata = (.googleService, "Google Cloud Translation API key")
+        case .googleTest:
+            metadata = (.googleService, "Test Google translation connection")
+        case .googleStatus:
+            metadata = (.googleService, "Google connection status")
+        case .llmEnabled:
+            metadata = (.llmService, "Show LLM in the translation window")
+        case .llmBaseURL:
+            metadata = (.llmService, "LLM Base URL")
+        case .llmAPIKey:
+            metadata = (.llmService, "LLM API key")
+        case .llmModel:
+            metadata = (.llmService, "LLM model")
+        case .llmTest:
+            metadata = (.llmService, "Test LLM connection")
+        case .llmStatus:
+            metadata = (.llmService, "LLM connection status")
         case .promptPreset:
             metadata = (.llmPrompts, "Default LLM prompt preset")
         case .generalPrompt:
@@ -408,7 +501,7 @@ public struct SettingsView: View {
 
     public var body: some View {
         Form {
-            ForEach(registry.groups, id: \.self) { group in
+            ForEach(registry.sectionGroups, id: \.self) { group in
                 section(for: group)
             }
             saveArea
@@ -435,19 +528,126 @@ public struct SettingsView: View {
             }
         case .translationServices:
             Section("Translation Services") {
+                providerCards
+                // 连接测试提示放在卡片之后，作为 Test Connection 按钮的脚注而不是节首的孤立说明。
                 controls(in: group)
             }
         case .llmPrompts:
             Section("LLM Prompts") {
                 controls(in: group)
             }
+        case .googleService, .llmService:
+            // 二级模块由 translationServices 内嵌渲染，不作为独立节出现。
+            EmptyView()
+        }
+    }
+
+    /// 两个二级模块整体只占 Form 的一行：Form 的行分隔线一旦穿过卡片，
+    /// 卡片边界就会被切断，层级又退回"平级行"的观感。
+    private var providerCards: some View {
+        VStack(spacing: 12) {
+            ForEach(registry.providerGroups, id: \.self) { group in
+                providerCard(group)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// 层级靠容器建立而不是靠字重：section 卡片是外层，provider 是嵌在其中自带描边的一层，
+    /// 卡片内再用分隔线把标题区与字段区分开，于是"模块 → 子模块 → 字段"三层各有边界。
+    @ViewBuilder
+    private func providerCard(_ group: SettingsFunctionalGroup) -> some View {
+        if let providerSwitch = group.providerSwitch {
+            let isVisible = policy.showsDetails(for: group)
+            let bodyControls = registry.bodyControls(in: group)
+            VStack(alignment: .leading, spacing: 12) {
+                providerCardHeader(
+                    title: providerSwitch.title,
+                    providerID: providerSwitch.providerID,
+                    descriptor: control(providerSwitch.controlID),
+                    isVisible: isVisible,
+                    isOn: providerBinding(group)
+                )
+                if !bodyControls.isEmpty {
+                    Divider()
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                        ForEach(bodyControls) { descriptor in
+                            providerFieldRow(descriptor)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    // 关闭的模块整体减淡后退，但仍保留完整边界，不会看起来像被删掉了。
+                    .fill(Color.primary.opacity(isVisible ? 0.05 : 0.02))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isVisible ? 0.10 : 0.06))
+            )
+        }
+    }
+
+    private func providerCardHeader(
+        title: String,
+        providerID: ProviderID,
+        descriptor: SettingsControlDescriptor,
+        isVisible: Bool,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(spacing: 10) {
+            // 图标与翻译窗口的卡片同源，设置项与它控制的那张卡片因此能对上号。
+            ProviderIconView(
+                providerID: providerID,
+                llmBrand: ProviderBrandResolver.resolve(baseURL: model.llmBaseURL)
+            )
+            .opacity(isVisible ? 1 : 0.5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(isVisible ? .primary : .secondary)
+                Text(SettingsPresentationPolicy.providerVisibilityCaption(isVisible: isVisible))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityLabel(descriptor.accessibilityLabel)
+                .accessibilityValue(descriptor.value ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func providerFieldRow(_ descriptor: SettingsControlDescriptor) -> some View {
+        if let label = SettingsPresentationPolicy.providerFieldLabel(descriptor.id) {
+            GridRow(alignment: .firstTextBaseline) {
+                Text(label)
+                    .foregroundStyle(.secondary)
+                controlRow(descriptor)
+            }
+        } else {
+            GridRow {
+                controlRow(descriptor)
+                    .gridCellColumns(2)
+            }
+        }
+    }
+
+    private func providerBinding(_ group: SettingsFunctionalGroup) -> Binding<Bool> {
+        switch group {
+        case .googleService: $model.googleProviderEnabled
+        case .llmService: $model.llmProviderEnabled
+        default: .constant(true)
         }
     }
 
     private func controls(in group: SettingsFunctionalGroup) -> some View {
-        ForEach(
-            registry.controls.filter { $0.group == group && $0.isVisible }
-        ) { descriptor in
+        ForEach(registry.bodyControls(in: group)) { descriptor in
             controlRow(descriptor)
         }
     }
@@ -483,11 +683,14 @@ public struct SettingsView: View {
             .disabled(!descriptor.isEnabled)
             .accessibilityLabel(descriptor.accessibilityLabel)
         case .googleAPIKey:
-            SecureField("Google Cloud Translation API Key", text: $model.googleAPIKey)
+            // 可见文案不再重复 provider 名（二级标题已经写了），但 accessibilityLabel 保留前缀：
+            // VoiceOver 会脱离上下文单独朗读某一行。
+            SecureField("API Key", text: $model.googleAPIKey)
+                .labelsHidden()
                 .disabled(!descriptor.isEnabled)
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .googleTest:
-            Button("Test Google Connection") {
+            Button("Test Connection") {
                 Task { await registry.perform(descriptor.id) }
             }
             .disabled(!descriptor.isEnabled)
@@ -499,17 +702,20 @@ public struct SettingsView: View {
                     .accessibilityValue(descriptor.value ?? "")
             }
         case .llmBaseURL:
-            TextField("LLM Base URL", text: $model.llmBaseURL)
+            TextField("Base URL", text: $model.llmBaseURL)
+                .labelsHidden()
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .llmAPIKey:
-            SecureField("LLM API Key", text: $model.llmAPIKey)
+            SecureField("API Key", text: $model.llmAPIKey)
+                .labelsHidden()
                 .disabled(!descriptor.isEnabled)
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .llmModel:
-            TextField("LLM Model", text: $model.llmModel)
+            TextField("Model", text: $model.llmModel)
+                .labelsHidden()
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .llmTest:
-            Button("Test LLM Connection") {
+            Button("Test Connection") {
                 Task { await registry.perform(descriptor.id) }
             }
             .disabled(!descriptor.isEnabled)
@@ -545,7 +751,7 @@ public struct SettingsView: View {
                 Task { await registry.perform(descriptor.id) }
             }
             .accessibilityLabel(descriptor.accessibilityLabel)
-        case .saveStatus, .save:
+        case .saveStatus, .save, .googleEnabled, .llmEnabled:
             EmptyView()
         }
     }

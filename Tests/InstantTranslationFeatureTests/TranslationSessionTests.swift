@@ -175,6 +175,53 @@ final class TranslationSessionTests: XCTestCase {
         session.cancelAll()
     }
 
+    func testHiddenProviderIsNeitherRequestedNorRetried() async throws {
+        let google = CancellationRecordingProvider(id: .google)
+        let llm = CancellationRecordingProvider(id: .llm)
+        let session = TranslationSession(
+            coordinator: TranslationCoordinator(providers: [google, llm]),
+            promptPresetID: .technologyAndRnD,
+            enabledProviderIDs: [.llm]
+        )
+
+        session.submit(rawText: "compiler", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        let llmStarted = await eventually { await llm.hasStarted(requestID: requestID) }
+
+        XCTAssertTrue(llmStarted)
+        let googleStarted = await google.hasStarted(requestID: requestID)
+        XCTAssertFalse(googleStarted, "A hidden provider must not receive requests")
+        XCTAssertEqual(session.states[.google], .idle)
+        XCTAssertEqual(session.states[.llm], .loading(requestID: requestID))
+        XCTAssertNil(session.retry(providerID: .google))
+
+        session.cancelAll()
+        _ = await eventually { await llm.wasCancelled(requestID: requestID) }
+        await google.releaseAll()
+        await llm.releaseAll()
+    }
+
+    func testDisablingProviderClearsItsCardWithoutTouchingTheOther() throws {
+        let session = makeSession()
+        session.submit(rawText: "compiler", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        session.receive(
+            .success(Self.result(providerID: .google, requestID: requestID, text: "编译器"))
+        )
+        session.receive(
+            .success(Self.result(providerID: .llm, requestID: requestID, text: "编译程序"))
+        )
+
+        session.enabledProviderIDs = [.llm]
+
+        XCTAssertEqual(session.states[.google], .idle)
+        XCTAssertEqual(
+            session.states[.llm],
+            .success(Self.result(providerID: .llm, requestID: requestID, text: "编译程序"))
+        )
+        session.cancelAll()
+    }
+
     private func makeSession(
         promptPresetID: PromptPresetID = .technologyAndRnD
     ) -> TranslationSession {

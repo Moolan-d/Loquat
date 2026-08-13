@@ -105,16 +105,27 @@ public final class ApplicationContainer {
         let coordinator = TranslationCoordinator(providers: [google, llm])
         let session = TranslationSession(
             coordinator: coordinator,
-            promptPresetID: preferences.defaultPromptPresetID
+            promptPresetID: preferences.defaultPromptPresetID,
+            enabledProviderIDs: preferences.enabledProviderIDs
         )
         let appearance = ProviderAppearance(
             llmBrand: ProviderBrandResolver.resolve(baseURL: preferences.llmBaseURL)
+        )
+        // 凭据只在这里读一次并发布快照；窗口渲染路径不再触碰 Keychain。
+        let availability = ProviderAvailability(
+            configuredProviderIDs: ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: .of(Result { try credentialStore.read(.googleAPIKey) }),
+                llmAPIKey: .of(Result { try credentialStore.read(.llmAPIKey) }),
+                llmBaseURL: preferences.llmBaseURL,
+                llmModel: preferences.llmModel
+            )
         )
         let focusController = TranslationInputFocusController()
         let content = NSHostingView(
             rootView: TranslationView(
                 session: session,
                 appearance: appearance,
+                availability: availability,
                 focusController: focusController
             )
         )

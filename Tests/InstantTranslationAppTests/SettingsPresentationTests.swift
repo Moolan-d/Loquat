@@ -9,11 +9,87 @@ import InstantTranslationInfrastructure
 
 @MainActor
 final class SettingsPresentationTests: XCTestCase {
-    func testPresentationPolicyHasOnlyTheThreeSettingsGroups() {
+    func testPresentationPolicyHasOnlyTheFiveSettingsGroups() {
         XCTAssertEqual(
             SettingsPresentationPolicy.functionalGroups,
+            [.general, .translationServices, .googleService, .llmService, .llmPrompts]
+        )
+    }
+
+    func testProviderGroupsAreNestedInTranslationServicesInsteadOfBeingOwnSections() {
+        // Google 与 LLM 不能自己成节：独立成节时关闭分组会让空 Section 与下一个节标题相邻，
+        // 标题被 Form 压小。它们只能作为 Translation Services 内部的二级模块出现。
+        XCTAssertEqual(
+            SettingsPresentationPolicy.sectionGroups,
             [.general, .translationServices, .llmPrompts]
         )
+        XCTAssertEqual(
+            SettingsPresentationPolicy.providerGroups,
+            [.googleService, .llmService]
+        )
+        XCTAssertTrue(
+            SettingsPresentationPolicy.sectionGroups
+                .allSatisfy { !SettingsPresentationPolicy.providerGroups.contains($0) }
+        )
+        let rendered = SettingsPresentationPolicy.sectionGroups
+            + SettingsPresentationPolicy.providerGroups
+        XCTAssertEqual(
+            Set(rendered),
+            Set(SettingsPresentationPolicy.functionalGroups),
+            "每个功能分组都必须被渲染到某处，否则控件会静默消失"
+        )
+    }
+
+    func testEveryProviderGroupCarriesItsOwnHeaderTitleAndSwitch() {
+        let switches = SettingsPresentationPolicy.providerGroups.map(\.providerSwitch)
+        XCTAssertEqual(
+            switches.map { $0?.title },
+            ["Google", "LLM"]
+        )
+        XCTAssertEqual(
+            switches.map { $0?.controlID },
+            [.googleEnabled, .llmEnabled]
+        )
+        // 只有二级模块带开关；其余分组带开关会让它也被当成 provider 渲染。
+        XCTAssertNil(SettingsFunctionalGroup.translationServices.providerSwitch)
+        XCTAssertNil(SettingsFunctionalGroup.general.providerSwitch)
+        XCTAssertNil(SettingsFunctionalGroup.llmPrompts.providerSwitch)
+    }
+
+    func testProviderCardCaptionExplainsThatHidingKeepsTheConfiguration() {
+        XCTAssertEqual(
+            SettingsPresentationPolicy.providerVisibilityCaption(isVisible: true),
+            "Shown in the translation window"
+        )
+        let hidden = SettingsPresentationPolicy.providerVisibilityCaption(isVisible: false)
+        XCTAssertNotEqual(
+            hidden,
+            SettingsPresentationPolicy.providerVisibilityCaption(isVisible: true)
+        )
+        // 关闭开关不清配置是这次修复的核心承诺，副标题必须把它说出来。
+        XCTAssertTrue(hidden.contains("kept"))
+    }
+
+    func testEveryProviderFieldHasALabelWhileActionsSpanTheWholeRow() {
+        // 字段标签移到卡片的标签列后，漏配一个 ID 会让该行只剩一个没有名字的输入框。
+        for id in [SettingsControlID.googleAPIKey, .llmAPIKey] {
+            XCTAssertEqual(SettingsPresentationPolicy.providerFieldLabel(id), "API Key")
+        }
+        XCTAssertEqual(SettingsPresentationPolicy.providerFieldLabel(.llmBaseURL), "Base URL")
+        XCTAssertEqual(SettingsPresentationPolicy.providerFieldLabel(.llmModel), "Model")
+        for id in [SettingsControlID.googleTest, .llmTest, .googleStatus, .llmStatus] {
+            XCTAssertNil(SettingsPresentationPolicy.providerFieldLabel(id))
+        }
+    }
+
+    func testProviderFieldLabelsDropTheProviderPrefixTheCardHeaderAlreadyCarries() {
+        // 卡片标题已经写了 Google / LLM，字段再带前缀就是重复；
+        // 但 accessibilityLabel 仍需带前缀，VoiceOver 是逐行朗读的。
+        for id in [SettingsControlID.googleAPIKey, .llmAPIKey, .llmBaseURL, .llmModel] {
+            let label = SettingsPresentationPolicy.providerFieldLabel(id) ?? ""
+            XCTAssertFalse(label.contains("LLM"))
+            XCTAssertFalse(label.contains("Google"))
+        }
     }
 
     func testUnavailableCredentialsExposeReloadAndDisableSecretEditingAndSave() async {
@@ -205,7 +281,7 @@ final class SettingsPresentationTests: XCTestCase {
         let registry = SettingsViewRegistry(model: model)
         XCTAssertEqual(
             registry.groups,
-            [.general, .translationServices, .llmPrompts]
+            [.general, .translationServices, .googleService, .llmService, .llmPrompts]
         )
         XCTAssertEqual(Set(registry.controls.map(\.id)), Set(SettingsControlID.allCases))
         XCTAssertTrue(
@@ -222,15 +298,27 @@ final class SettingsPresentationTests: XCTestCase {
             [
                 .credentialStatus,
                 .reloadCredentials,
+                .connectionWarning,
+            ]
+        )
+        XCTAssertEqual(
+            Set(registry.controls.filter { $0.group == .googleService }.map(\.id)),
+            [
+                .googleEnabled,
                 .googleAPIKey,
                 .googleTest,
                 .googleStatus,
+            ]
+        )
+        XCTAssertEqual(
+            Set(registry.controls.filter { $0.group == .llmService }.map(\.id)),
+            [
+                .llmEnabled,
                 .llmBaseURL,
                 .llmAPIKey,
                 .llmModel,
                 .llmTest,
                 .llmStatus,
-                .connectionWarning,
             ]
         )
         XCTAssertEqual(
@@ -272,6 +360,94 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertTrue(reloaded.control(.llmAPIKey).isEnabled)
         XCTAssertTrue(reloaded.control(.save).isEnabled)
         XCTAssertFalse(reloaded.control(.reloadCredentials).isVisible)
+    }
+
+    func testProviderGroupSwitchHidesOnlyThatGroupsBodyControls() async {
+        let model = await makeModel()
+
+        let full = SettingsViewRegistry(model: model)
+        XCTAssertTrue(full.control(.googleAPIKey).isVisible)
+        XCTAssertTrue(full.control(.llmBaseURL).isVisible)
+        // 连接状态尚未测试过，因此默认可见的只有密钥输入与测试按钮。
+        XCTAssertEqual(
+            Set(full.bodyControls(in: .googleService).map(\.id)),
+            [.googleAPIKey, .googleTest]
+        )
+
+        model.googleProviderEnabled = false
+        let collapsed = SettingsViewRegistry(model: model)
+
+        XCTAssertTrue(collapsed.bodyControls(in: .googleService).isEmpty)
+        XCTAssertFalse(collapsed.control(.googleAPIKey).isVisible)
+        XCTAssertFalse(collapsed.control(.googleTest).isVisible)
+        // 开关本身留在分组标题上，否则用户无法再把分组打开。
+        XCTAssertTrue(collapsed.control(.googleEnabled).isVisible)
+        XCTAssertEqual(collapsed.control(.googleEnabled).value, "Off")
+        XCTAssertFalse(collapsed.bodyControls(in: .llmService).isEmpty)
+        XCTAssertTrue(collapsed.control(.llmBaseURL).isVisible)
+        XCTAssertTrue(collapsed.control(.llmAPIKey).isVisible)
+    }
+
+    func testHidingProviderKeepsItsStoredConfigurationAfterSave() async throws {
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "google-secret",
+            .llmAPIKey: "llm-secret",
+        ])
+        let preferences = MemoryPreferencesStore()
+        let session = TranslationSession(
+            coordinator: TranslationCoordinator(providers: []),
+            promptPresetID: .technologyAndRnD
+        )
+        let availability = ProviderAvailability(configuredProviderIDs: [.google, .llm])
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: credentials,
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            providerAvailability: availability,
+            session: session
+        )
+        model.llmBaseURL = "https://api.openai.com/v1"
+        model.llmModel = "gpt-4o-mini"
+
+        model.googleProviderEnabled = false
+        try await model.save()
+
+        // 隐藏只影响可见性：密钥、Base URL 与模型都必须原样留在存储里。
+        XCTAssertEqual(try credentials.read(.googleAPIKey), "google-secret")
+        XCTAssertEqual(try credentials.read(.llmAPIKey), "llm-secret")
+        let stored = await preferences.load()
+        XCTAssertFalse(stored.googleProviderEnabled)
+        XCTAssertTrue(stored.llmProviderEnabled)
+        XCTAssertEqual(stored.llmBaseURL, "https://api.openai.com/v1")
+        XCTAssertEqual(stored.llmModel, "gpt-4o-mini")
+        XCTAssertEqual(session.enabledProviderIDs, [.llm])
+        XCTAssertEqual(availability.configuredProviderIDs, [.google, .llm])
+    }
+
+    func testReopeningSettingsRestoresProviderVisibilityFromStoredPreferences() async {
+        let preferences = MemoryPreferencesStore()
+        var stored = AppPreferences()
+        stored.llmProviderEnabled = false
+        try? await preferences.save(stored)
+
+        let model = await SettingsViewModel.make(
+            preferencesStore: preferences,
+            credentialStore: MemoryCredentialStore(),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+
+        XCTAssertTrue(model.googleProviderEnabled)
+        XCTAssertFalse(model.llmProviderEnabled)
+        XCTAssertEqual(stored.enabledProviderIDs, [.google])
     }
 
     func testSettingsViewRegistrySaveRunsSaveAndReflectsSavingThenSaved() async {
@@ -600,6 +776,9 @@ final class SettingsPresentationTests: XCTestCase {
             rootView: TranslationView(
                 session: session,
                 appearance: ProviderAppearance(llmBrand: .genericAI),
+                availability: ProviderAvailability(
+                    configuredProviderIDs: [.google, .llm]
+                ),
                 focusController: TranslationInputFocusController()
             )
         )

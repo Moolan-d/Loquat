@@ -235,6 +235,175 @@ final class TranslationPresentationTests: XCTestCase {
         XCTAssertNil(controller.copiedProviderID)
     }
 
+    func testEmptyStateOnlyAppearsWhenNoVisibleProviderIsConfigured() {
+        XCTAssertEqual(
+            TranslationResultsPresentation.emptyStateReason(
+                configured: [],
+                enabled: [.google, .llm]
+            ),
+            .noProviderConfigured
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.emptyStateReason(
+                configured: [.google, .llm],
+                enabled: []
+            ),
+            .allProvidersHidden
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.emptyStateReason(
+                configured: [.google],
+                enabled: [.llm]
+            ),
+            .noProviderConfigured
+        )
+        XCTAssertNil(
+            TranslationResultsPresentation.emptyStateReason(
+                configured: [.google],
+                enabled: [.google, .llm]
+            )
+        )
+    }
+
+    func testEmptyStateReasonsCarryDistinctCopyAndAction() {
+        for reason in [
+            TranslationEmptyStateReason.noProviderConfigured,
+            TranslationEmptyStateReason.allProvidersHidden,
+        ] {
+            XCTAssertFalse(reason.title.isEmpty)
+            XCTAssertFalse(reason.message.isEmpty)
+            XCTAssertFalse(reason.symbolName.isEmpty)
+            XCTAssertEqual(reason.actionTitle, "Open Settings…")
+        }
+        XCTAssertNotEqual(
+            TranslationEmptyStateReason.noProviderConfigured.title,
+            TranslationEmptyStateReason.allProvidersHidden.title
+        )
+        XCTAssertNotEqual(
+            TranslationEmptyStateReason.noProviderConfigured.symbolName,
+            TranslationEmptyStateReason.allProvidersHidden.symbolName
+        )
+    }
+
+    func testHiddenProvidersLeaveTheWindowInAStableOrder() {
+        XCTAssertEqual(
+            TranslationResultsPresentation.visibleProviderIDs(enabled: [.llm, .google]),
+            [.google, .llm]
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.visibleProviderIDs(enabled: [.llm]),
+            [.llm]
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.visibleProviderIDs(enabled: []),
+            []
+        )
+    }
+
+    func testIdleCardDistinguishesConfiguredFromUnconfiguredProvider() {
+        let ready = TranslationResultsPresentation.idleStatus(isConfigured: true)
+        let missing = TranslationResultsPresentation.idleStatus(isConfigured: false)
+
+        XCTAssertEqual(ready, .ready)
+        XCTAssertEqual(missing, .notConfigured)
+        XCTAssertNotEqual(ready.message, missing.message)
+        XCTAssertFalse(ready.showsSetUpAction)
+        XCTAssertTrue(missing.showsSetUpAction)
+    }
+
+    func testIdleCardNamesTheServiceItRepresents() {
+        XCTAssertEqual(
+            TranslationResultsPresentation.displayName(providerID: .google, llmBrand: .openAI),
+            "Google Translate"
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.displayName(providerID: .llm, llmBrand: .openAI),
+            "OpenAI"
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.displayName(providerID: .llm, llmBrand: .deepSeek),
+            "DeepSeek"
+        )
+        XCTAssertEqual(
+            TranslationResultsPresentation.displayName(providerID: .llm, llmBrand: .genericAI),
+            "LLM"
+        )
+    }
+
+    func testConfiguredProvidersRequireEveryFieldTheProviderNeeds() {
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: "google-key",
+                llmAPIKey: "llm-key",
+                llmBaseURL: "https://api.openai.com/v1",
+                llmModel: "gpt-4o-mini"
+            ),
+            [.google, .llm]
+        )
+        // LLM 缺 model 时仍然无法翻译，不能算作"已配置"。
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: "google-key",
+                llmAPIKey: "llm-key",
+                llmBaseURL: "https://api.openai.com/v1",
+                llmModel: ""
+            ),
+            [.google]
+        )
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: "  ",
+                llmAPIKey: "llm-key",
+                llmBaseURL: "https://api.openai.com/v1",
+                llmModel: "gpt-4o-mini"
+            ),
+            [.llm]
+        )
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: nil,
+                llmAPIKey: nil,
+                llmBaseURL: "",
+                llmModel: ""
+            ),
+            []
+        )
+    }
+
+    func testUnreadableKeychainDoesNotClaimTheProviderIsUnconfigured() {
+        struct ReadFailure: Error {}
+
+        // 读不出来只说明状态未知；此时错报"未配置"正是这次要修的误导。
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: .of(Result<String?, any Error>.failure(ReadFailure())),
+                llmAPIKey: .of(Result<String?, any Error>.failure(ReadFailure())),
+                llmBaseURL: "https://api.openai.com/v1",
+                llmModel: "gpt-4o-mini"
+            ),
+            [.google, .llm]
+        )
+        // Base URL/模型来自偏好，读得到就按实际值判断，不受 Keychain 失败影响。
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: .of(Result<String?, any Error>.failure(ReadFailure())),
+                llmAPIKey: .of(Result<String?, any Error>.failure(ReadFailure())),
+                llmBaseURL: "",
+                llmModel: ""
+            ),
+            [.google]
+        )
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: .of(Result<String?, any Error>.success(nil)),
+                llmAPIKey: .of(Result<String?, any Error>.success(nil)),
+                llmBaseURL: "",
+                llmModel: ""
+            ),
+            []
+        )
+    }
+
     private func makeResult(
         providerID: ProviderID,
         requestID: UUID = UUID(),

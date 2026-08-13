@@ -6,17 +6,28 @@ import InstantTranslationFeature
 public struct TranslationView: View {
     @Bindable private var session: TranslationSession
     @Bindable private var appearance: ProviderAppearance
+    @Bindable private var availability: ProviderAvailability
     @State private var copyController: CopyController
     private let focusController: TranslationInputFocusController
+    private let openSettings: @MainActor () -> Void
 
     public init(
         session: TranslationSession,
         appearance: ProviderAppearance,
-        focusController: TranslationInputFocusController
+        availability: ProviderAvailability,
+        focusController: TranslationInputFocusController,
+        openSettings: @escaping @MainActor () -> Void = {
+            NotificationCenter.default.post(
+                name: .openInstantTranslationSettings,
+                object: nil
+            )
+        }
     ) {
         self.session = session
         self.appearance = appearance
+        self.availability = availability
         self.focusController = focusController
+        self.openSettings = openSettings
         _copyController = State(initialValue: CopyController())
     }
 
@@ -28,6 +39,13 @@ public struct TranslationView: View {
             )
         }
         return DirectionResolver().resolve(session.input)
+    }
+
+    private var emptyStateReason: TranslationEmptyStateReason? {
+        TranslationResultsPresentation.emptyStateReason(
+            configured: availability.configuredProviderIDs,
+            enabled: session.enabledProviderIDs
+        )
     }
 
     public var body: some View {
@@ -52,20 +70,29 @@ public struct TranslationView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            ResultCardView(
-                providerID: .google,
-                state: session.states[.google] ?? .idle,
-                llmBrand: appearance.llmBrand,
-                copyController: copyController,
-                retry: { session.retry(providerID: .google) }
-            )
-            ResultCardView(
-                providerID: .llm,
-                state: session.states[.llm] ?? .idle,
-                llmBrand: appearance.llmBrand,
-                copyController: copyController,
-                retry: { session.retry(providerID: .llm) }
-            )
+            if let emptyStateReason {
+                TranslationEmptyStateView(
+                    reason: emptyStateReason,
+                    openSettings: openSettings
+                )
+            } else {
+                ForEach(
+                    TranslationResultsPresentation.visibleProviderIDs(
+                        enabled: session.enabledProviderIDs
+                    ),
+                    id: \.self
+                ) { providerID in
+                    ResultCardView(
+                        providerID: providerID,
+                        state: session.states[providerID] ?? .idle,
+                        llmBrand: appearance.llmBrand,
+                        isConfigured: availability.configuredProviderIDs.contains(providerID),
+                        copyController: copyController,
+                        retry: { session.retry(providerID: providerID) },
+                        openSettings: openSettings
+                    )
+                }
+            }
         }
         .padding(14)
         .frame(width: 370)

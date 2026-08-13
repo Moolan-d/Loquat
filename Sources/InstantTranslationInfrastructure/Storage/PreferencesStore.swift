@@ -15,6 +15,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var launchAtLogin = false
     public var globalShortcut: KeyboardShortcut?
     public var translateClipboardOnOpen = false
+    public var googleProviderEnabled = true
+    public var llmProviderEnabled = true
     public var llmBaseURL = ""
     public var llmModel = ""
     public var generalPrompt = DefaultPrompts.general
@@ -22,6 +24,52 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var defaultPromptPresetID = PromptPresetID.technologyAndRnD
 
     public init() {}
+
+    // 合成的 Codable 会把缺失键当成错误，于是新增一个字段就让旧快照整体解码失败并被重置为默认值。
+    // 逐字段回退到默认值后，旧版本写入的偏好在字段演进后仍然保留。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = AppPreferences()
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        launchAtLogin = value(.launchAtLogin, defaults.launchAtLogin)
+        globalShortcut = try? container.decodeIfPresent(
+            KeyboardShortcut.self,
+            forKey: .globalShortcut
+        )
+        translateClipboardOnOpen = value(
+            .translateClipboardOnOpen,
+            defaults.translateClipboardOnOpen
+        )
+        googleProviderEnabled = value(.googleProviderEnabled, defaults.googleProviderEnabled)
+        llmProviderEnabled = value(.llmProviderEnabled, defaults.llmProviderEnabled)
+        llmBaseURL = value(.llmBaseURL, defaults.llmBaseURL)
+        llmModel = value(.llmModel, defaults.llmModel)
+        generalPrompt = value(.generalPrompt, defaults.generalPrompt)
+        technologyAndRnDPrompt = value(
+            .technologyAndRnDPrompt,
+            defaults.technologyAndRnDPrompt
+        )
+        defaultPromptPresetID = value(
+            .defaultPromptPresetID,
+            defaults.defaultPromptPresetID
+        )
+    }
+}
+
+extension AppPreferences {
+    /// 分组开关是持久化偏好，窗口与设置界面都从这里读取，避免两处各自推导出不同结论。
+    public var enabledProviderIDs: Set<ProviderID> {
+        var enabled: Set<ProviderID> = []
+        if googleProviderEnabled {
+            enabled.insert(.google)
+        }
+        if llmProviderEnabled {
+            enabled.insert(.llm)
+        }
+        return enabled
+    }
 }
 
 public protocol PreferencesStoring: Sendable {

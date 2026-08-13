@@ -12,31 +12,68 @@ public struct ResultCardView: View {
     private let providerID: ProviderID
     private let state: ProviderCardState
     private let llmBrand: ProviderBrand
+    private let isConfigured: Bool
     @Bindable private var copyController: CopyController
     private let retry: () -> Void
+    private let openSettings: @MainActor () -> Void
 
     public init(
         providerID: ProviderID,
         state: ProviderCardState,
         llmBrand: ProviderBrand,
+        isConfigured: Bool = true,
         copyController: CopyController,
-        retry: @escaping () -> Void
+        retry: @escaping () -> Void,
+        openSettings: @escaping @MainActor () -> Void = {
+            NotificationCenter.default.post(
+                name: .openInstantTranslationSettings,
+                object: nil
+            )
+        }
     ) {
         self.providerID = providerID
         self.state = state
         self.llmBrand = llmBrand
+        self.isConfigured = isConfigured
         self.copyController = copyController
         self.retry = retry
+        self.openSettings = openSettings
+    }
+
+    private var displayName: String {
+        TranslationResultsPresentation.displayName(
+            providerID: providerID,
+            llmBrand: llmBrand
+        )
+    }
+
+    private var idleStatus: TranslationIdleStatus {
+        TranslationResultsPresentation.idleStatus(isConfigured: isConfigured)
     }
 
     public var body: some View {
         Group {
             switch state {
             case .idle:
-                Color.clear.frame(height: 52)
-            case .loading:
-                HStack {
+                // 空闲卡片显示服务名与就绪状态，让“已配置未输入”明显区别于未配置的初始态。
+                HStack(spacing: 8) {
                     ProviderIconView(providerID: providerID, llmBrand: llmBrand)
+                    Text(displayName)
+                        .font(.callout)
+                    Spacer()
+                    Text(idleStatus.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if idleStatus.showsSetUpAction {
+                        Button("Set Up", action: openSettings)
+                            .controlSize(.small)
+                    }
+                }
+            case .loading:
+                HStack(spacing: 8) {
+                    ProviderIconView(providerID: providerID, llmBrand: llmBrand)
+                    Text(displayName)
+                        .font(.callout)
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel(
@@ -113,6 +150,7 @@ public struct ResultCardView: View {
                 state: cardAccessibilityState
             )
         )
+        .accessibilityValue(cardAccessibilityState == .idle ? idleStatus.message : "")
     }
 
     private var cardAccessibilityState: TranslationCardAccessibilityState {

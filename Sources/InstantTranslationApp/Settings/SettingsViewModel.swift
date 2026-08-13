@@ -102,6 +102,8 @@ public final class SettingsViewModel {
     public var launchAtLogin: Bool
     public var globalShortcut: KeyboardShortcut?
     public var translateClipboardOnOpen: Bool
+    public var googleProviderEnabled: Bool
+    public var llmProviderEnabled: Bool
     public var llmBaseURL: String
     public var llmModel: String
     public var generalPrompt: String
@@ -122,6 +124,7 @@ public final class SettingsViewModel {
     private let shortcutAction: @MainActor () -> Void
     private let connectionTester: any ProviderConnectionTesting
     private let providerAppearance: ProviderAppearance
+    private let providerAvailability: ProviderAvailability
     private weak var session: TranslationSession?
     private var googleTestGeneration = 0
     private var llmTestGeneration = 0
@@ -134,6 +137,7 @@ public final class SettingsViewModel {
         shortcutAction: @escaping @MainActor () -> Void,
         connectionTester: any ProviderConnectionTesting,
         providerAppearance: ProviderAppearance,
+        providerAvailability: ProviderAvailability = ProviderAvailability(),
         session: TranslationSession?
     ) async -> SettingsViewModel {
         let preferences = await preferencesStore.load()
@@ -151,6 +155,7 @@ public final class SettingsViewModel {
             shortcutAction: shortcutAction,
             connectionTester: connectionTester,
             providerAppearance: providerAppearance,
+            providerAvailability: providerAvailability,
             session: session
         )
     }
@@ -168,11 +173,14 @@ public final class SettingsViewModel {
         shortcutAction: @escaping @MainActor () -> Void,
         connectionTester: any ProviderConnectionTesting,
         providerAppearance: ProviderAppearance,
+        providerAvailability: ProviderAvailability,
         session: TranslationSession?
     ) {
         launchAtLogin = actualLaunchAtLogin
         globalShortcut = preferences.globalShortcut
         translateClipboardOnOpen = preferences.translateClipboardOnOpen
+        googleProviderEnabled = preferences.googleProviderEnabled
+        llmProviderEnabled = preferences.llmProviderEnabled
         llmBaseURL = preferences.llmBaseURL
         llmModel = preferences.llmModel
         generalPrompt = preferences.generalPrompt
@@ -188,6 +196,7 @@ public final class SettingsViewModel {
         self.shortcutAction = shortcutAction
         self.connectionTester = connectionTester
         self.providerAppearance = providerAppearance
+        self.providerAvailability = providerAvailability
         self.session = session
     }
 
@@ -288,6 +297,8 @@ public final class SettingsViewModel {
         googleAPIKey = credentials.googleAPIKey ?? ""
         llmAPIKey = credentials.llmAPIKey ?? ""
         credentialAccessState = .loaded
+        // 这里不刷新窗口的"已配置"快照：Base URL 与模型可能是尚未保存的编辑值，
+        // 用它们发布会让窗口提前显示成已配置。快照只在启动与保存成功时更新。
     }
 
     public func testGoogleConnection() async {
@@ -379,6 +390,8 @@ public final class SettingsViewModel {
         preferences.launchAtLogin = launchAtLogin
         preferences.globalShortcut = globalShortcut
         preferences.translateClipboardOnOpen = translateClipboardOnOpen
+        preferences.googleProviderEnabled = googleProviderEnabled
+        preferences.llmProviderEnabled = llmProviderEnabled
         preferences.llmBaseURL = normalizedBaseURL
         preferences.llmModel = model
         preferences.generalPrompt = general
@@ -440,6 +453,8 @@ public final class SettingsViewModel {
         launchAtLogin = proposed.preferences.launchAtLogin
         globalShortcut = proposed.preferences.globalShortcut
         translateClipboardOnOpen = proposed.preferences.translateClipboardOnOpen
+        googleProviderEnabled = proposed.preferences.googleProviderEnabled
+        llmProviderEnabled = proposed.preferences.llmProviderEnabled
         llmBaseURL = proposed.llmBaseURL
         llmModel = proposed.preferences.llmModel
         generalPrompt = proposed.preferences.generalPrompt
@@ -448,7 +463,14 @@ public final class SettingsViewModel {
         googleAPIKey = proposed.googleAPIKey
         llmAPIKey = proposed.llmAPIKey
         session?.promptPresetID = proposed.preferences.defaultPromptPresetID
+        session?.enabledProviderIDs = proposed.preferences.enabledProviderIDs
         providerAppearance.llmBrand = ProviderBrandResolver.resolve(baseURL: proposed.llmBaseURL)
+        providerAvailability.configuredProviderIDs = ProviderAvailability.configuredProviderIDs(
+            googleAPIKey: proposed.googleAPIKey,
+            llmAPIKey: proposed.llmAPIKey,
+            llmBaseURL: proposed.llmBaseURL,
+            llmModel: proposed.preferences.llmModel
+        )
         saveState = .saved
         saveError = nil
     }

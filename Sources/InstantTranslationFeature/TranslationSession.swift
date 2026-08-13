@@ -14,6 +14,16 @@ public final class TranslationSession {
     public private(set) var requiresManualClipboardConfirmation = false
     public var promptPresetID: PromptPresetID
 
+    /// 用户在设置中隐藏的 provider 不参与请求分发，也不在窗口保留条目状态。
+    public var enabledProviderIDs: Set<ProviderID> {
+        didSet {
+            guard enabledProviderIDs != oldValue else { return }
+            for providerID in states.keys where !enabledProviderIDs.contains(providerID) {
+                states[providerID] = .idle
+            }
+        }
+    }
+
     private let coordinator: TranslationCoordinator
     private let resolver = DirectionResolver()
     private var activeTask: Task<Void, Never>?
@@ -21,10 +31,12 @@ public final class TranslationSession {
 
     public init(
         coordinator: TranslationCoordinator,
-        promptPresetID: PromptPresetID
+        promptPresetID: PromptPresetID,
+        enabledProviderIDs: Set<ProviderID> = [.google, .llm]
     ) {
         self.coordinator = coordinator
         self.promptPresetID = promptPresetID
+        self.enabledProviderIDs = enabledProviderIDs
     }
 
     public func submit(
@@ -50,10 +62,18 @@ public final class TranslationSession {
         )
 
         activeRequest = request
-        states[.google] = .loading(requestID: request.id)
-        states[.llm] = .loading(requestID: request.id)
+        for providerID in states.keys {
+            states[providerID] = enabledProviderIDs.contains(providerID)
+                ? .loading(requestID: request.id)
+                : .idle
+        }
+        let requestedProviderIDs = enabledProviderIDs
+        guard !requestedProviderIDs.isEmpty else { return }
         activeTask = Task { [coordinator] in
-            for await event in coordinator.events(for: request) {
+            for await event in coordinator.events(
+                for: request,
+                providerIDs: requestedProviderIDs
+            ) {
                 // 取消负责尽快停工，requestID 校验再拦截已越过取消点的迟到事件，二者缺一不可。
                 guard !Task.isCancelled else { return }
                 receive(event)
@@ -116,7 +136,9 @@ public final class TranslationSession {
 
     @discardableResult
     public func retry(providerID: ProviderID) -> TranslationRetryCompletion? {
-        guard let request = activeRequest else { return nil }
+        guard let request = activeRequest,
+              enabledProviderIDs.contains(providerID)
+        else { return nil }
 
         retryTasks[providerID]?.cancel()
         states[providerID] = .loading(requestID: request.id)

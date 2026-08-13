@@ -32,6 +32,57 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(preferences.defaultPromptPresetID, .technologyAndRnD)
     }
 
+    func testLegacyPreferencesSnapshotKeepsValuesWhenNewFieldsAreAdded() async throws {
+        let suite = "InstantTranslationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+
+        // 旧版本写入的快照没有 provider 开关键；解码必须逐字段回退而不是整体重置。
+        let legacy = """
+        {
+          "launchAtLogin": true,
+          "translateClipboardOnOpen": true,
+          "llmBaseURL": "https://api.openai.com/v1",
+          "llmModel": "gpt-4o-mini",
+          "generalPrompt": "legacy general",
+          "technologyAndRnDPrompt": "legacy technology",
+          "defaultPromptPresetID": "general"
+        }
+        """
+        defaults.set(Data(legacy.utf8), forKey: "appPreferences")
+
+        let preferences = await UserDefaultsPreferencesStore(defaults: defaults).load()
+
+        XCTAssertTrue(preferences.launchAtLogin)
+        XCTAssertTrue(preferences.translateClipboardOnOpen)
+        XCTAssertEqual(preferences.llmBaseURL, "https://api.openai.com/v1")
+        XCTAssertEqual(preferences.llmModel, "gpt-4o-mini")
+        XCTAssertEqual(preferences.generalPrompt, "legacy general")
+        XCTAssertEqual(preferences.technologyAndRnDPrompt, "legacy technology")
+        XCTAssertEqual(preferences.defaultPromptPresetID, .general)
+        XCTAssertTrue(preferences.googleProviderEnabled)
+        XCTAssertTrue(preferences.llmProviderEnabled)
+    }
+
+    func testProviderVisibilitySurvivesSaveAndReload() async throws {
+        let suite = "InstantTranslationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+
+        var preferences = AppPreferences()
+        preferences.googleProviderEnabled = false
+        preferences.llmBaseURL = "https://api.openai.com/v1"
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+        try await store.save(preferences)
+
+        // load 每次都从 UserDefaults 重新解码，因此这里验证的是完整的编解码往返。
+        let reloaded = await store.load()
+
+        XCTAssertFalse(reloaded.googleProviderEnabled)
+        XCTAssertTrue(reloaded.llmProviderEnabled)
+        XCTAssertEqual(reloaded.llmBaseURL, "https://api.openai.com/v1")
+    }
+
     func testKeychainRoundTripUsesApplicationService() throws {
         let account = Self.makeTestAccount()
         let client = TestSecItemClient()
