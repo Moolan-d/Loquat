@@ -64,6 +64,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/InstantTranslation" "$APP/Contents/MacOS/InstantTranslation"
 cp "$ROOT/Config/Info.plist" "$APP/Contents/Info.plist"
+if [[ -f "$ROOT/Config/Loquat.icns" ]]; then
+    cp "$ROOT/Config/Loquat.icns" "$APP/Contents/Resources/Loquat.icns"
+else
+    echo "warning: Config/Loquat.icns not found; packaging without app icon" >&2
+fi
 find "$BIN_DIR" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$APP/Contents/Resources/" \;
 
 if [[ "$MODE" == "adhoc" ]]; then
