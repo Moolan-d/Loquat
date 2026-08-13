@@ -13,10 +13,6 @@ let package = Package(
         .library(name: "InstantTranslationFeature", targets: ["InstantTranslationFeature"]),
         .library(name: "InstantTranslationApp", targets: ["InstantTranslationApp"]),
         .executable(name: "InstantTranslation", targets: ["InstantTranslation"]),
-        .executable(
-            name: "InstantTranslationDiagnostics",
-            targets: ["InstantTranslationDiagnostics"]
-        ),
     ],
     targets: [
         .target(name: "InstantTranslationCore"),
@@ -53,15 +49,6 @@ let package = Package(
             name: "InstantTranslation",
             dependencies: ["InstantTranslationApp"]
         ),
-        .executableTarget(
-            name: "InstantTranslationDiagnostics",
-            dependencies: [
-                "InstantTranslationApp",
-                "InstantTranslationFeature",
-                "InstantTranslationCore",
-                "InstantTranslationInfrastructure",
-            ]
-        ),
         .testTarget(
             name: "InstantTranslationAppTests",
             dependencies: [
@@ -70,10 +57,6 @@ let package = Package(
                 "InstantTranslationCore",
                 "InstantTranslationInfrastructure",
             ]
-        ),
-        .testTarget(
-            name: "InstantTranslationDiagnosticsTests",
-            dependencies: ["InstantTranslationDiagnostics"]
         ),
     ],
     swiftLanguageModes: [.v6]
