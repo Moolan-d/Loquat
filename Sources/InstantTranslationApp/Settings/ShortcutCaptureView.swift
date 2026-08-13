@@ -116,6 +116,25 @@ enum ShortcutCapturePolicy {
 }
 
 @MainActor
+private final class ShortcutChangeSink {
+    typealias Handler = (InstantTranslationInfrastructure.KeyboardShortcut?) -> Void
+
+    private var handler: Handler
+
+    init(handler: @escaping Handler) {
+        self.handler = handler
+    }
+
+    func update(handler: @escaping Handler) {
+        self.handler = handler
+    }
+
+    func send(_ shortcut: InstantTranslationInfrastructure.KeyboardShortcut?) {
+        handler(shortcut)
+    }
+}
+
+@MainActor
 public struct ShortcutCaptureView: NSViewRepresentable {
     @Binding private var shortcut: InstantTranslationInfrastructure.KeyboardShortcut?
 
@@ -133,6 +152,9 @@ public struct ShortcutCaptureView: NSViewRepresentable {
     }
 
     public func updateNSView(_ view: ShortcutRecorderView, context: Context) {
+        let binding = $shortcut
+        // NSView 会跨 SwiftUI 更新复用；先替换写回目标，避免继续持有首次 Binding。
+        view.updateChangeHandler { binding.wrappedValue = $0 }
         view.shortcut = shortcut
     }
 }
@@ -147,7 +169,7 @@ public final class ShortcutRecorderView: NSView {
     }
 
     private var session = ShortcutCaptureSession()
-    private let onChange: (InstantTranslationInfrastructure.KeyboardShortcut?) -> Void
+    private let changeSink: ShortcutChangeSink
 
     var isRecording: Bool { session.isRecording }
 
@@ -160,7 +182,7 @@ public final class ShortcutRecorderView: NSView {
         onChange: @escaping (InstantTranslationInfrastructure.KeyboardShortcut?) -> Void
     ) {
         self.shortcut = shortcut
-        self.onChange = onChange
+        changeSink = ShortcutChangeSink(handler: onChange)
         super.init(frame: .zero)
         focusRingType = .exterior
         setAccessibilityElement(true)
@@ -201,8 +223,14 @@ public final class ShortcutRecorderView: NSView {
             } else {
                 shortcut = value
             }
-            onChange(value)
+            changeSink.send(value)
         }
+    }
+
+    fileprivate func updateChangeHandler(
+        _ handler: @escaping ShortcutChangeSink.Handler
+    ) {
+        changeSink.update(handler: handler)
     }
 
     func handleKeyEquivalent(keyCode: UInt16, carbonModifiers: UInt32) -> Bool {
@@ -234,7 +262,10 @@ public final class ShortcutRecorderView: NSView {
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        handleKeyEquivalent(
+        guard event.modifierFlags.contains(.command) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        return handleKeyEquivalent(
             keyCode: event.keyCode,
             carbonModifiers: Self.carbonModifiers(from: event.modifierFlags)
         ) || super.performKeyEquivalent(with: event)
