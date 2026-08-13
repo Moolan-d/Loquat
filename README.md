@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  English | <a href="README_zh.md">中文</a>
+</p>
+
+<p align="center">
   <img src="screenshot1.webp" alt="Loquat translation popover" width="600" />
 </p>
 
@@ -45,7 +49,7 @@
 - No analytics, no telemetry, no third-party runtime dependencies.
 - Remote LLM endpoints must use HTTPS (localhost is allowed for local models).
 
-## Screenshots
+## Config Screenshots
 
 <p align="center">
   <img src="screenshot2.webp" alt="Loquat settings" width="480" />
