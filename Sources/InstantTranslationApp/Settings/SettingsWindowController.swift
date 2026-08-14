@@ -138,6 +138,67 @@ public final class SettingsWindowController: NSWindowController {
 
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
+        mainMenu.addItem(makeEditMenuItem())
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    /// 菜单栏辅助应用没有默认的 Edit 菜单，Cmd+C/V/X/A/Z 等标准编辑快捷键
+    /// 就无法通过 key equivalent 路由到设置页里的 TextField / SecureField / TextEditor，
+    /// 表现为只能右键粘贴。这里补一个标准 Edit 菜单，让键盘快捷键粘贴/复制/剪切恢复工作。
+    private func makeEditMenuItem() -> NSMenuItem {
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+
+        let undo = NSMenuItem(
+            title: "Undo",
+            action: Selector(("undo:")),
+            keyEquivalent: "z"
+        )
+        undo.keyEquivalentModifierMask = .command
+        editMenu.addItem(undo)
+
+        let redo = NSMenuItem(
+            title: "Redo",
+            action: Selector(("redo:")),
+            keyEquivalent: "Z"
+        )
+        redo.keyEquivalentModifierMask = .command
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+
+        let cut = NSMenuItem(
+            title: "Cut",
+            action: #selector(NSText.cut(_:)),
+            keyEquivalent: "x"
+        )
+        cut.keyEquivalentModifierMask = .command
+        editMenu.addItem(cut)
+
+        let copy = NSMenuItem(
+            title: "Copy",
+            action: #selector(NSText.copy(_:)),
+            keyEquivalent: "c"
+        )
+        copy.keyEquivalentModifierMask = .command
+        editMenu.addItem(copy)
+
+        let paste = NSMenuItem(
+            title: "Paste",
+            action: #selector(NSText.paste(_:)),
+            keyEquivalent: "v"
+        )
+        paste.keyEquivalentModifierMask = .command
+        editMenu.addItem(paste)
+
+        let selectAll = NSMenuItem(
+            title: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a"
+        )
+        selectAll.keyEquivalentModifierMask = .command
+        editMenu.addItem(selectAll)
+
+        editItem.submenu = editMenu
+        return editItem
     }
 }

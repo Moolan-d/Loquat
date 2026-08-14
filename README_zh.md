@@ -55,8 +55,8 @@
 
 1. 点击菜单栏图标，右键 → **Settings**（或按 `⌘,`）。
 2. 至少配置一个引擎：
-   - **Google** — 粘贴（右键） Google Cloud Translation API 密钥。
-   - **LLM** — 粘贴（右键） API 密钥、Base URL 与模型名（如 OpenAI、DeepSeek、OpenRouter）。
+   - **Google** — 粘贴 Google Cloud Translation API 密钥。
+   - **LLM** — 粘贴 API 密钥、Base URL 与模型名（如 OpenAI、DeepSeek、OpenRouter）。
 3. 录制一个全局快捷键。
 4. （可选）开启 **Translate Clipboard When Opened by Shortcut**——设置快捷键后该选项才会出现。
 5. 按下快捷键唤出弹窗，输入内容，或让剪贴板自动填入。
@@ -67,7 +67,7 @@
 2. 启用 **Cloud Translation API**（需要结算账号）。
 3. 进入 **API 和服务 → 凭据 → 创建凭据 → API 密钥**。
 4. （推荐）把密钥限制到 Cloud Translation API。
-5. 复制密钥，粘贴（右键）到 **Loquat → 设置 → Google → API Key**。
+5. 复制密钥，粘贴到 **Loquat → 设置 → Google → API Key**。
 
 ### 快捷键
 

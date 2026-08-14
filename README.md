@@ -55,8 +55,8 @@
 
 1. Click the menu-bar icon, right-click → **Settings** (or press `⌘,`).
 2. Add at least one provider:
-   - **Google** — paste (right-click) a Google Cloud Translation API key.
-   - **LLM** — paste (right-click) an API key, Base URL, and model name (e.g. OpenAI, DeepSeek, OpenRouter).
+   - **Google** — paste a Google Cloud Translation API key.
+   - **LLM** — paste an API key, Base URL, and model name (e.g. OpenAI, DeepSeek, OpenRouter).
 3. Record a global shortcut.
 4. (Optional) enable **Translate Clipboard When Opened by Shortcut** — it appears once a shortcut is set.
 5. Press the shortcut to open the popover, then type, or let the clipboard fill it in.
@@ -67,7 +67,7 @@
 2. Enable the **Cloud Translation API** (requires a billing account).
 3. Open **APIs & Services → Credentials → Create credentials → API key**.
 4. (Recommended) restrict the key to the Cloud Translation API.
-5. Copy the key and paste (right-click) it into **Loquat → Settings → Google → API Key**.
+5. Copy the key and paste it into **Loquat → Settings → Google → API Key**.
 
 ### Shortcuts
 
