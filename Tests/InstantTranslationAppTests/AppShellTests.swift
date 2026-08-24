@@ -88,6 +88,40 @@ final class AppShellTests: XCTestCase {
         assertFirstResponder(input, in: window)
     }
 
+    func testPopoverHeightFollowsContentAndClampsToConfiguredBounds() {
+        // 断言生产配置本身，而不是就地重建一份同样的数字。
+        let metrics = PopoverContentMetrics.standard
+
+        XCTAssertEqual(metrics.size(forFittingHeight: 120).height, 200, accuracy: 0.01)
+        XCTAssertEqual(metrics.size(forFittingHeight: 300).height, 300, accuracy: 0.01)
+        // 结果卡片堆叠得再高，弹窗也不会长到超出屏幕；余量交给结果区自身滚动。
+        XCTAssertEqual(metrics.size(forFittingHeight: 5_000).height, 560, accuracy: 0.01)
+        XCTAssertEqual(
+            metrics.size(forFittingHeight: 300).width,
+            TranslationView.contentWidth,
+            accuracy: 0.01
+        )
+    }
+
+    func testShowingPopoverActivatesApplicationAndClosingDoesNot() {
+        // Cmd+V 走主菜单 key equivalent，其 validation 由 NSApp.targetForAction: 解析；
+        // accessory 应用未激活时该解析返回 nil，粘贴被静默丢弃（打字仍正常，因为按键
+        // 直接进 field editor）。设置窗口早已在展示前 activate，弹窗必须保持同一约定。
+        var activationCount = 0
+        let controller = TranslationPopoverController(
+            contentView: NSView(frame: NSRect(x: 0, y: 0, width: 370, height: 430)),
+            focusRequester: TranslationInputFocusController(),
+            activateApplication: { activationCount += 1 }
+        )
+        let button = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength).button!
+
+        controller.toggle(relativeTo: button)
+        XCTAssertEqual(activationCount, 1, "showing the popover must activate the app")
+
+        controller.close()
+        XCTAssertEqual(activationCount, 1, "closing the popover must not activate the app")
+    }
+
     func testStatusBarUsesTemplateSymbolAndHasNoDockActivationPolicy() {
         AppDelegate().configureActivationPolicy()
         let controller = StatusBarController(

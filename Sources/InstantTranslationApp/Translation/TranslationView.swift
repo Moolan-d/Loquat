@@ -8,6 +8,9 @@ public struct TranslationView: View {
     @Bindable private var appearance: ProviderAppearance
     @Bindable private var availability: ProviderAvailability
     @State private var copyController: CopyController
+    @State private var resolvedInputHeight: CGFloat = TranslationInputField
+        .fallbackMetrics
+        .minimumHeight
     private let focusController: TranslationInputFocusController
     private let openSettings: @MainActor () -> Void
 
@@ -30,6 +33,10 @@ public struct TranslationView: View {
         self.openSettings = openSettings
         _copyController = State(initialValue: CopyController())
     }
+
+    /// 弹窗内容宽度的唯一来源：`PopoverContentMetrics.standard` 也读它，两处不能各写各的。
+    nonisolated static let contentWidth: CGFloat = 370
+    private static let maximumResultsHeight: CGFloat = 420
 
     private var shownDirection: TranslationDirection {
         if let request = session.activeRequest {
@@ -58,9 +65,18 @@ public struct TranslationView: View {
                 focusController: focusController,
                 onSubmit: {
                     session.submit(rawText: session.input, sourceID: .manual)
-                }
+                },
+                onHeightChange: { resolvedInputHeight = $0 }
             )
-            .frame(height: 24)
+            .frame(height: resolvedInputHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            )
             HStack {
                 if session.requiresManualClipboardConfirmation {
                     Text("Clipboard text exceeds 500 characters. Press Enter to translate.")
@@ -76,26 +92,36 @@ public struct TranslationView: View {
                     openSettings: openSettings
                 )
             } else {
-                ForEach(
-                    TranslationResultsPresentation.visibleProviderIDs(
-                        enabled: session.enabledProviderIDs
-                    ),
-                    id: \.self
-                ) { providerID in
-                    ResultCardView(
-                        providerID: providerID,
-                        state: session.states[providerID] ?? .idle,
-                        llmBrand: appearance.llmBrand,
-                        isConfigured: availability.configuredProviderIDs.contains(providerID),
-                        copyController: copyController,
-                        retry: { session.retry(providerID: providerID) },
-                        openSettings: openSettings
-                    )
+                // 结果区整体滚动：长译文不再把弹窗撑破，也不截断任何一张卡片的正文。
+                ScrollView(.vertical) {
+                    VStack(spacing: 10) {
+                        ForEach(
+                            TranslationResultsPresentation.visibleProviderIDs(
+                                enabled: session.enabledProviderIDs
+                            ),
+                            id: \.self
+                        ) { providerID in
+                            ResultCardView(
+                                providerID: providerID,
+                                state: session.states[providerID] ?? .idle,
+                                llmBrand: appearance.llmBrand,
+                                isConfigured: availability.configuredProviderIDs
+                                    .contains(providerID),
+                                copyController: copyController,
+                                retry: { session.retry(providerID: providerID) },
+                                openSettings: openSettings
+                            )
+                        }
+                    }
+                    .padding(.bottom, 2)
                 }
+                .frame(maxHeight: Self.maximumResultsHeight)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .padding(14)
-        .frame(width: 370)
+        .frame(width: Self.contentWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .background(.clear)
         .onAppear {
             // SwiftUI 出现时先请求一次；popover 每次展示后仍由 AppKit 桥再次确保焦点。
@@ -128,58 +154,187 @@ private struct DirectionControl: View {
 }
 
 private struct TranslationInputField: NSViewRepresentable {
+    static let font = NSFont.preferredFont(forTextStyle: .body)
+    static let textInset: CGFloat = 4
+
+    /// 行高取排版引擎实际使用的 line fragment 高度：字体的 defaultLineHeight 会差零点几磅，
+    /// 三行封顶时正好够露出第四行的一截。inset 与 textContainerInset 同源，
+    /// 可见区才落在整行边界上。真实行高只有布局后才知道，这里的值仅用作首帧下限。
+    static func metrics(lineHeight: CGFloat) -> TranslationInputMetrics {
+        TranslationInputMetrics(
+            lineHeight: lineHeight,
+            topInset: textInset,
+            bottomInset: textInset
+        )
+    }
+
+    static let fallbackMetrics = metrics(
+        lineHeight: NSLayoutManager().defaultLineHeight(for: font)
+    )
+
     @Binding var text: String
     let focusController: TranslationInputFocusController
     let onSubmit: @MainActor () -> Void
+    let onHeightChange: @MainActor (CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
-        field.bezelStyle = .roundedBezel
-        field.delegate = context.coordinator
-        field.setAccessibilityLabel("Text to translate")
-        focusController.bind(field)
-        return field
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.scrollerStyle = .overlay
+
+        let textView = SubmitOnReturnTextView()
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.font = Self.font
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(
+            width: Self.textInset,
+            height: Self.textInset
+        )
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.setAccessibilityLabel("Text to translate")
+        textView.onSubmit = { [weak textView] in
+            guard let textView else { return }
+            context.coordinator.parent.text = textView.string
+            context.coordinator.parent.onSubmit()
+        }
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        focusController.bind(textView)
+        // 首次布局时文本容器宽度还是 0，usedRect 量不出真实行数；
+        // 监听 frame 变化，等拿到真实宽度后再回报一次高度。
+        textView.postsFrameChangedNotifications = true
+        context.coordinator.observeFrameChanges(of: textView)
+        // 圆角描边由外层绘制，这里只负责文本与滚动，避免 bezel 与材质背景叠加。
+        scrollView.wantsLayer = true
+        return scrollView
     }
 
-    func updateNSView(_ field: NSTextField, context: Context) {
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        if field.stringValue != text {
-            field.stringValue = text
+        guard let textView = context.coordinator.textView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        context.coordinator.scheduleHeightReport()
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.stopObservingFrameChanges()
+        if let textView = coordinator.textView {
+            coordinator.parent.focusController.unbind(textView)
         }
     }
 
-    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
-        coordinator.parent.focusController.unbind(field)
-    }
-
     @MainActor
-    final class Coordinator: NSObject, NSTextFieldDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: TranslationInputField
+        weak var textView: NSTextView?
 
         init(parent: TranslationInputField) {
             self.parent = parent
         }
 
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
-            parent.text = field.stringValue
+        private var frameObserver: NSObjectProtocol?
+        private var lastReportedHeight: CGFloat = -1
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+            scheduleHeightReport()
         }
 
-        func control(
-            _ control: NSControl,
-            textView: NSTextView,
-            doCommandBy commandSelector: Selector
-        ) -> Bool {
-            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
-                return false
+        func observeFrameChanges(of textView: NSTextView) {
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: textView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.scheduleHeightReport()
+                }
             }
-            parent.text = control.stringValue
-            parent.onSubmit()
-            return true
         }
+
+        func stopObservingFrameChanges() {
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+            }
+            frameObserver = nil
+        }
+
+        /// 高度回报会写 SwiftUI @State，不能发生在 updateNSView 的同一轮更新里。
+        func scheduleHeightReport() {
+            Task { @MainActor [weak self] in
+                self?.reportHeight()
+            }
+        }
+
+        /// 用布局管理器实测文本高度与真实行高，换算出外框高度（三行封顶）。
+        private func reportHeight() {
+            guard let textView,
+                  let layoutManager = textView.layoutManager,
+                  let container = textView.textContainer,
+                  container.size.width > 0
+            else { return }
+            layoutManager.ensureLayout(for: container)
+            let measured = layoutManager.usedRect(for: container).height
+            let metrics = TranslationInputField.metrics(
+                lineHeight: firstLineFragmentHeight(layoutManager) ?? measured
+            )
+            let resolved = metrics.height(forMeasuredTextHeight: measured)
+            guard abs(resolved - lastReportedHeight) > 0.5 else { return }
+            lastReportedHeight = resolved
+            parent.onHeightChange(resolved)
+        }
+
+        private func firstLineFragmentHeight(
+            _ layoutManager: NSLayoutManager
+        ) -> CGFloat? {
+            guard layoutManager.numberOfGlyphs > 0 else { return nil }
+            var effectiveRange = NSRange()
+            let fragment = layoutManager.lineFragmentRect(
+                forGlyphAt: 0,
+                effectiveRange: &effectiveRange
+            )
+            return fragment.height > 0 ? fragment.height : nil
+        }
+    }
+}
+
+/// Enter 提交，Shift+Enter 换行。NSTextView 对两者都发 insertNewline:，
+/// 只能靠当前事件的修饰键区分，否则多行输入根本敲不出第二行。
+@MainActor
+final class SubmitOnReturnTextView: NSTextView {
+    var onSubmit: (@MainActor () -> Void)?
+    /// 默认读当前事件；测试从这里注入修饰键状态。
+    var isShiftPressed: @MainActor () -> Bool = {
+        NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(NSResponder.insertNewline(_:)), !isShiftPressed() {
+            onSubmit?()
+            return
+        }
+        super.doCommand(by: selector)
     }
 }

@@ -10,12 +10,39 @@ private final class AppearanceAwareVisualEffectView: NSVisualEffectView {
     }
 }
 
+/// 弹窗尺寸策略：宽度固定，高度跟随内容的 fitting size，并夹在上下界之间。
+/// 上界避免长译文把弹窗顶出屏幕（超出部分由结果区自身滚动消化）。
+struct PopoverContentMetrics: Equatable {
+    /// 生产配置的唯一来源，测试直接断言它，改了production值测试就会红。
+    static let standard = PopoverContentMetrics(
+        width: TranslationView.contentWidth,
+        minimumHeight: 200,
+        maximumHeight: 560
+    )
+
+    let width: CGFloat
+    let minimumHeight: CGFloat
+    let maximumHeight: CGFloat
+
+    func size(forFittingHeight fitting: CGFloat) -> NSSize {
+        NSSize(
+            width: width,
+            height: min(max(fitting, minimumHeight), maximumHeight)
+        )
+    }
+}
+
 @MainActor
 public final class PopoverContentController: NSViewController {
     public let materialView: NSVisualEffectView
     // Swift 6 的 deinit 非隔离；通知 token 只在主线程安装，并在析构时一次性移除。
     nonisolated(unsafe) private var accessibilityObserver: NSObjectProtocol?
     private let shouldReduceTransparency: @MainActor () -> Bool
+    private weak var hostedContentView: NSView?
+    private let metrics: PopoverContentMetrics
+
+    /// 首帧还没有 fitting size，先按常见内容高度落座，免得弹窗一出现就动画改尺寸。
+    private static let initialContentHeight: CGFloat = 430
 
     public convenience init(contentView: NSView) {
         self.init(
@@ -28,11 +55,13 @@ public final class PopoverContentController: NSViewController {
 
     init(
         contentView: NSView,
-        shouldReduceTransparency: @escaping @MainActor () -> Bool
+        shouldReduceTransparency: @escaping @MainActor () -> Bool,
+        metrics: PopoverContentMetrics = .standard
     ) {
         let materialView = AppearanceAwareVisualEffectView()
         self.materialView = materialView
         self.shouldReduceTransparency = shouldReduceTransparency
+        self.metrics = metrics
         super.init(nibName: nil, bundle: nil)
         materialView.material = .popover
         materialView.blendingMode = .behindWindow
@@ -47,7 +76,8 @@ public final class PopoverContentController: NSViewController {
             contentView.topAnchor.constraint(equalTo: materialView.topAnchor),
             contentView.bottomAnchor.constraint(equalTo: materialView.bottomAnchor),
         ])
-        preferredContentSize = NSSize(width: 370, height: 430)
+        hostedContentView = contentView
+        preferredContentSize = metrics.size(forFittingHeight: Self.initialContentHeight)
         materialView.appearanceDidChange = { [weak self] in
             self?.updateMaterial()
         }
@@ -58,6 +88,16 @@ public final class PopoverContentController: NSViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    override public func viewDidLayout() {
+        super.viewDidLayout()
+        guard let hostedContentView else { return }
+        let fitting = hostedContentView.fittingSize.height
+        guard fitting > 0 else { return }
+        let updated = metrics.size(forFittingHeight: fitting)
+        guard updated != preferredContentSize else { return }
+        preferredContentSize = updated
     }
 
     private func startObservingAccessibilityDisplayOptions() {

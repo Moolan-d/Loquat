@@ -7,6 +7,53 @@ import InstantTranslationInfrastructure
 
 @MainActor
 final class TranslationPresentationTests: XCTestCase {
+    func testInputFieldHeightGrowsWithContentThenClampsAtThreeLines() {
+        let metrics = TranslationInputMetrics(lineHeight: 16, topInset: 4, bottomInset: 4)
+
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 0), 24, accuracy: 0.01)
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 16), 24, accuracy: 0.01)
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 32), 40, accuracy: 0.01)
+        // 三行封顶：可见区正好是三整行，不漏出第四行的顶端。
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 48), 52, accuracy: 0.01)
+        // 超过三行不再增高；余下内容由输入框内部滚动承担，弹窗整体高度保持稳定。
+        // 与正好三行同高，越过封顶时输入框不会反而缩一截。
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 160), 52, accuracy: 0.01)
+    }
+
+    func testReturnSubmitsWhileShiftReturnInsertsANewline() {
+        let textView = SubmitOnReturnTextView()
+        var submitCount = 0
+        textView.onSubmit = { submitCount += 1 }
+        textView.string = "first"
+
+        // 未按 Shift：Enter 提交，不改动文本。
+        textView.isShiftPressed = { false }
+        textView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(submitCount, 1)
+        XCTAssertEqual(textView.string, "first")
+
+        // 按住 Shift：换行落进文本，不触发提交；否则三行输入框根本敲不出第二行。
+        textView.isShiftPressed = { true }
+        textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+        textView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(submitCount, 1)
+        XCTAssertEqual(textView.string, "first\n")
+    }
+
+    func testInputFieldCapFloorsFractionalLineHeightsToWholePoints() {
+        // 排版引擎给出的真实行高带小数；三行封顶若不向下取整，SwiftUI 的像素对齐
+        // 会把外框放大半点，露出第四行的顶端。
+        let metrics = TranslationInputMetrics(
+            lineHeight: 16.00634765625,
+            topInset: 4,
+            bottomInset: 4
+        )
+
+        XCTAssertEqual(metrics.maximumHeight, 52, accuracy: 0.0001)
+        XCTAssertEqual(metrics.height(forMeasuredTextHeight: 128), 52, accuracy: 0.0001)
+    }
+
+
     func testBundledProviderLogosResolveToDistinctTemplateSVGImages() throws {
         let loader = BundledProviderLogoLoader(bundle: .module)
         let expectedFiles: [(ProviderBrand, String)] = [
