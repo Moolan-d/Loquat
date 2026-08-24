@@ -1,6 +1,7 @@
 import Observation
 import SwiftUI
 import InstantTranslationCore
+import InstantTranslationFeature
 import InstantTranslationInfrastructure
 
 /// 凭据可能读不出来（Keychain 报错），这与"确实没配置"是两回事，必须分开表达。
@@ -150,6 +151,15 @@ public enum TranslationResultsPresentation {
         case .openRouter: "OpenRouter"
         case .genericAI: "LLM"
         }
+    }
+
+    /// 输入与卡片都空时没有可清的东西，重置按钮保持禁用，
+    /// 免得界面上摆着一个点下去毫无反应的控件。
+    public static func canReset(
+        input: String,
+        states: [ProviderID: ProviderCardState]
+    ) -> Bool {
+        !input.isEmpty || states.values.contains { $0 != .idle }
     }
 
     public static func idleStatus(isConfigured: Bool) -> TranslationIdleStatus {

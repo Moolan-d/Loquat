@@ -20,6 +20,18 @@ final class TranslationPresentationTests: XCTestCase {
         XCTAssertEqual(metrics.height(forMeasuredTextHeight: 160), 52, accuracy: 0.01)
     }
 
+    func testResetIsDisabledOnlyWhenThereIsNothingToClear() {
+        let idle: [ProviderID: ProviderCardState] = [.google: .idle, .llm: .idle]
+        XCTAssertFalse(TranslationResultsPresentation.canReset(input: "", states: idle))
+
+        // 只要输入框有字，或任一张卡片不是 idle，就有东西可清。
+        XCTAssertTrue(TranslationResultsPresentation.canReset(input: "compiler", states: idle))
+        XCTAssertTrue(TranslationResultsPresentation.canReset(
+            input: "",
+            states: [.google: .loading(requestID: UUID()), .llm: .idle]
+        ))
+    }
+
     func testReturnSubmitsWhileShiftReturnInsertsANewline() {
         let textView = SubmitOnReturnTextView()
         var submitCount = 0

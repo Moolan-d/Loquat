@@ -42,6 +42,49 @@ final class TranslationSessionTests: XCTestCase {
         session.cancelAll()
     }
 
+    func testResetClearsInputResultsAndActiveRequest() throws {
+        let session = makeSession()
+        session.submit(rawText: "compiler", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        session.receive(.success(Self.result(providerID: .google, requestID: requestID, text: "编译器")))
+        XCTAssertEqual(session.states[.google], .success(Self.result(
+            providerID: .google, requestID: requestID, text: "编译器"
+        )))
+
+        session.reset()
+
+        XCTAssertEqual(session.input, "")
+        XCTAssertNil(session.activeRequest)
+        XCTAssertEqual(session.states[.google], .idle)
+        XCTAssertEqual(session.states[.llm], .idle)
+        XCTAssertFalse(session.requiresManualClipboardConfirmation)
+    }
+
+    func testResetClearsPendingClipboardConfirmation() throws {
+        let session = makeSession()
+        let longText = String(repeating: "字", count: 600)
+        let source = try XCTUnwrap(SourceText(rawValue: longText, sourceID: .clipboard))
+        session.applyClipboardDecision(.requireConfirmation(source))
+        XCTAssertTrue(session.requiresManualClipboardConfirmation)
+
+        session.reset()
+
+        XCTAssertEqual(session.input, "")
+        XCTAssertFalse(session.requiresManualClipboardConfirmation)
+    }
+
+    func testResetRejectsLateEventsFromTheClearedRequest() throws {
+        let session = makeSession()
+        session.submit(rawText: "compiler", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+
+        session.reset()
+        // 清空后迟到的结果不能把卡片又点亮，否则界面看起来没被重置。
+        session.receive(.success(Self.result(providerID: .google, requestID: requestID, text: "stale")))
+
+        XCTAssertEqual(session.states[.google], .idle)
+    }
+
     func testSwapReversesActiveDirectionAndMarksItManual() throws {
         let session = makeSession()
         session.submit(rawText: "compiler", sourceID: .manual)

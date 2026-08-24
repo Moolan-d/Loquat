@@ -57,9 +57,19 @@ public struct TranslationView: View {
 
     public var body: some View {
         VStack(spacing: 10) {
-            DirectionControl(direction: shownDirection) {
-                session.swapDirectionAndResubmit()
-            }
+            TranslationHeader(
+                direction: shownDirection,
+                canReset: TranslationResultsPresentation.canReset(
+                    input: session.input,
+                    states: session.states
+                ),
+                reset: {
+                    session.reset()
+                    // 清空后光标该回到输入框：用户下一步一定是重新输入。
+                    focusController.requestFocus()
+                },
+                swap: { session.swapDirectionAndResubmit() }
+            )
             TranslationInputField(
                 text: $session.input,
                 focusController: focusController,
@@ -130,12 +140,24 @@ public struct TranslationView: View {
     }
 }
 
-private struct DirectionControl: View {
+/// 弹窗顶部这一行只放会话级操作：左边重置，右边方向与互换。
+/// 两个按钮分置两端，是为了把"清空"和"换方向"隔开——前者不可撤销，后者随手可逆。
+private struct TranslationHeader: View {
     let direction: TranslationDirection
+    let canReset: Bool
+    let reset: () -> Void
     let swap: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 6) {
+            Button(action: reset) {
+                Image(systemName: "arrow.counterclockwise")
+            }
+            .buttonStyle(.borderless)
+            // 没东西可清时禁用：空弹窗的顶栏应当是安静的。
+            .disabled(!canReset)
+            .accessibilityLabel("Clear input and results")
+            .help("Clear input and results")
             Spacer()
             Text("\(shortName(direction.source)) → \(shortName(direction.target))")
             Button(action: swap) {

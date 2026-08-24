@@ -151,6 +151,19 @@ public final class TranslationSession {
         return TranslationRetryCompletion(task: task)
     }
 
+    /// 清空一次会话：输入、结果卡片、进行中的请求一起归零。
+    /// 弹窗再次唤起时不该还挂着上一轮的译文。activeRequest 置空后，
+    /// 已经越过取消点的迟到事件会被 receive 的 guard 挡下，卡片不会又被点亮。
+    public func reset() {
+        cancelTasks()
+        input = ""
+        activeRequest = nil
+        requiresManualClipboardConfirmation = false
+        for providerID in states.keys {
+            states[providerID] = .idle
+        }
+    }
+
     /// 仅在新请求或进程停止时取消会话；popover 关闭只隐藏界面，不应调用此方法。
     public func cancelAll() {
         cancelTasks()
