@@ -791,6 +791,79 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertEqual(shortcut.registeredShortcut, newShortcut)
     }
 
+    func testRecordingAShortcutWithoutSavingLeavesTheOldOneRegistered() async {
+        let old = KeyboardShortcut(keyCode: 49, carbonModifiers: UInt32(cmdKey))
+        let registrar = FakeSettingsShortcutRegistrar(registeredShortcut: old)
+        let model = await makeModel(shortcutRegistrar: registrar)
+
+        model.globalShortcut = KeyboardShortcut(keyCode: 0, carbonModifiers: UInt32(optionKey))
+
+        // 录制只改内存里的值；注册发生在 Save，没保存就还是之前那组键在生效。
+        XCTAssertEqual(registrar.registeredShortcut, old)
+        XCTAssertTrue(registrar.registerValues.isEmpty)
+    }
+
+    func testClearingAShortcutWithoutSavingLeavesTheOldOneRegistered() async {
+        let old = KeyboardShortcut(keyCode: 49, carbonModifiers: UInt32(cmdKey))
+        let registrar = FakeSettingsShortcutRegistrar(registeredShortcut: old)
+        let model = await makeModel(shortcutRegistrar: registrar)
+
+        model.globalShortcut = nil
+
+        XCTAssertEqual(registrar.registeredShortcut, old)
+        XCTAssertTrue(registrar.registerValues.isEmpty)
+    }
+
+    func testClosingSettingsRestoresTheShortcutThatIsActuallyInEffect() async {
+        let old = KeyboardShortcut(keyCode: 49, carbonModifiers: UInt32(cmdKey))
+        let registrar = FakeSettingsShortcutRegistrar(registeredShortcut: old)
+        let model = await makeModel(shortcutRegistrar: registrar)
+        model.globalShortcut = old
+        let controller = SettingsWindowController(
+            model: model,
+            notificationCenter: NotificationCenter(),
+            activateApplication: {},
+            orderWindowFront: { window, sender in window.makeKeyAndOrderFront(sender) },
+            installApplicationMenu: false
+        )
+        controller.showSettings(nil)
+
+        // 用户按了清除但没保存就把窗口关了。
+        model.globalShortcut = nil
+        controller.window?.close()
+
+        // 输入框不能停在"Not Set"：旧热键还在系统里活着，界面得说实话。
+        XCTAssertEqual(model.globalShortcut, old)
+        XCTAssertTrue(registrar.registerValues.isEmpty)
+    }
+
+    func testContainerSuspendsTheShortcutWhileTheSettingsWindowIsOnScreen() async {
+        let container = await ApplicationContainer.make(
+            preferencesStore: MemoryPreferencesStore(),
+            credentialStore: MemoryCredentialStore(),
+            transport: RecordingHTTPTransport(responses: []),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            clipboardSource: EmptyInputSource(),
+            installApplicationMenu: false
+        )
+        defer { container.stop() }
+
+        XCTAssertFalse(container.statusBarController.isShortcutSuspended())
+
+        container.settingsWindowController.showSettings(nil)
+        XCTAssertTrue(
+            container.statusBarController.isShortcutSuspended(),
+            "设置窗口在屏幕上时，全局快捷键必须停用"
+        )
+
+        container.settingsWindowController.window?.close()
+        XCTAssertFalse(
+            container.statusBarController.isShortcutSuspended(),
+            "窗口关掉后快捷键要立刻恢复；窗口对象仍被持有，不能拿构造与否判断"
+        )
+    }
+
     func testTranslationPopoverHasNoPromptPresetControl() {
         let session = TranslationSession(
             coordinator: TranslationCoordinator(providers: []),
@@ -833,13 +906,14 @@ final class SettingsPresentationTests: XCTestCase {
 
     private func makeModel(
         credentials: MemoryCredentialStore = MemoryCredentialStore(),
-        connectionTester: any ProviderConnectionTesting = RecordingConnectionTester()
+        connectionTester: any ProviderConnectionTesting = RecordingConnectionTester(),
+        shortcutRegistrar: FakeSettingsShortcutRegistrar = FakeSettingsShortcutRegistrar()
     ) async -> SettingsViewModel {
         await SettingsViewModel.make(
             preferencesStore: MemoryPreferencesStore(),
             credentialStore: credentials,
             launchAtLogin: FakeLaunchAtLoginController(),
-            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutRegistrar: shortcutRegistrar,
             shortcutAction: {},
             connectionTester: connectionTester,
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),

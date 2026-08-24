@@ -435,6 +435,14 @@ public final class SettingsViewModel {
         return failed
     }
 
+    /// 丢弃没保存的快捷键改动，回到真正注册着的那一组。
+    /// 只回滚快捷键：其余字段留在输入框里等用户回来接着改，代价只是白填一次；
+    /// 而快捷键是唯一一个"界面显示"会和"实际生效"当场对不上的字段——
+    /// 按过清除按钮之后输入框空着，旧热键却还在系统里活着。
+    public func discardUnsavedShortcut() {
+        globalShortcut = shortcutRegistrar.registeredShortcut
+    }
+
     private func storeCredential(_ value: String, key: CredentialKey) throws {
         if value.isEmpty {
             try credentialStore.delete(key)

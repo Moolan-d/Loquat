@@ -122,6 +122,57 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(activationCount, 1, "closing the popover must not activate the app")
     }
 
+    func testGlobalShortcutIsSuspendedWhileSettingsIsOpen() {
+        // 展示路径必定 activate、关闭路径必定不 activate（见上一个用例），
+        // 因此激活次数就是"弹窗被唤起了几次"的可靠观测点；
+        // headless 下 NSPopover.isShown 不可靠，不拿它做断言。
+        var activations = 0
+        var clipboardPreparations = 0
+        let settingsIsOpen = MutableFlag(true)
+        let popover = TranslationPopoverController(
+            contentView: NSView(frame: NSRect(x: 0, y: 0, width: 370, height: 430)),
+            focusRequester: TranslationInputFocusController(),
+            activateApplication: { activations += 1 }
+        )
+        let controller = StatusBarController(
+            popoverController: popover,
+            shortcutRegistrar: FakeShortcutRegistrar()
+        )
+        controller.isShortcutSuspended = { settingsIsOpen.value }
+        controller.onShortcutOpen = { clipboardPreparations += 1 }
+        defer { popover.close() }
+
+        // 面板开着：快捷键整条路径都不走——不唤起弹窗，也不顺手去读剪贴板。
+        controller.toggleFromShortcut()
+        XCTAssertEqual(activations, 0)
+        XCTAssertEqual(clipboardPreparations, 0)
+
+        settingsIsOpen.value = false
+        controller.toggleFromShortcut()
+        XCTAssertEqual(activations, 1)
+        XCTAssertEqual(clipboardPreparations, 1)
+    }
+
+    func testStatusBarClickStillTogglesWhileSettingsIsOpen() {
+        // 只拦快捷键。点菜单栏图标是用户明确指向弹窗的操作，没有误触之虞。
+        var activations = 0
+        let popover = TranslationPopoverController(
+            contentView: NSView(frame: NSRect(x: 0, y: 0, width: 370, height: 430)),
+            focusRequester: TranslationInputFocusController(),
+            activateApplication: { activations += 1 }
+        )
+        let controller = StatusBarController(
+            popoverController: popover,
+            shortcutRegistrar: FakeShortcutRegistrar()
+        )
+        controller.isShortcutSuspended = { true }
+        defer { popover.close() }
+
+        controller.statusItem.button?.performClick(nil)
+
+        XCTAssertEqual(activations, 1)
+    }
+
     func testStatusBarUsesTemplateSymbolAndHasNoDockActivationPolicy() {
         AppDelegate().configureActivationPolicy()
         let controller = StatusBarController(
@@ -221,5 +272,15 @@ private final class FakeShortcutRegistrar: GlobalShortcutRegistering {
 
     func unregister() {
         registeredShortcut = nil
+    }
+}
+
+/// 让闭包读到测试中途改动的值；直接捕获 var 在 Swift 6 下是 sendable 逃逸警告。
+@MainActor
+private final class MutableFlag {
+    var value: Bool
+
+    init(_ value: Bool) {
+        self.value = value
     }
 }

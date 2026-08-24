@@ -8,7 +8,7 @@ enum SettingsWindowMetrics {
 }
 
 @MainActor
-public final class SettingsWindowController: NSWindowController {
+public final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     public let model: SettingsViewModel
 
     private let notificationCenter: NotificationCenter
@@ -20,6 +20,12 @@ public final class SettingsWindowController: NSWindowController {
     private var isSettingsPresentationPending = false
 
     var isSettingsWindowConstructed: Bool { retainedSettingsWindow != nil }
+
+    /// 窗口关闭后仍被持有（isReleasedWhenClosed = false），构造与否说明不了它在不在屏幕上。
+    /// 最小化的窗口 isVisible 为假，此时快捷键该恢复工作，正是想要的语义。
+    public var isSettingsWindowVisible: Bool {
+        retainedSettingsWindow?.isVisible ?? false
+    }
 
     public convenience init(model: SettingsViewModel) {
         self.init(model: model, installApplicationMenu: true)
@@ -85,6 +91,8 @@ public final class SettingsWindowController: NSWindowController {
         isConstructingSettingsWindow = true
         isSettingsPresentationPending = true
         let created = makeWindow(model)
+        // makeWindow 可能是测试替身，delegate 统一在这里落定，回滚路径才不会漏。
+        created.delegate = self
         retainedSettingsWindow = created
         window = created
         isConstructingSettingsWindow = false
@@ -97,6 +105,12 @@ public final class SettingsWindowController: NSWindowController {
     private func presentSettingsWindow(_ window: NSWindow, sender: Any?) {
         activateApplication()
         orderWindowFront(window, sender)
+    }
+
+    /// 关窗即丢弃未保存的快捷键改动。录制与清除都只改内存里的值，注册发生在 Save，
+    /// 窗口一关那组键就成了假象，下次打开还会照着假象显示。
+    @objc public func windowWillClose(_ notification: Notification) {
+        model.discardUnsavedShortcut()
     }
 
     @objc private func openSettingsNotification(_ notification: Notification) {

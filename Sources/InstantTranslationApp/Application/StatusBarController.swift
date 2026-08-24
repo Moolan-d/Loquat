@@ -11,6 +11,11 @@ public final class StatusBarController {
     /// 快捷键唤起且弹窗尚未显示时调用（鼠标唤起不调、关闭动作不调）。
     public var onShortcutOpen: (@MainActor () -> Void)?
 
+    /// 快捷键是否暂时失效。设置面板开着的时候为真：全局热键不认前台是谁，
+    /// 用户正在录制的那一组键会同时打到这里，弹窗就盖到设置窗口上了。
+    /// 只拦快捷键——点菜单栏图标是明确指向弹窗的操作，照常放行。
+    public var isShortcutSuspended: @MainActor () -> Bool = { false }
+
     public init(
         popoverController: TranslationPopoverController,
         shortcutRegistrar: GlobalShortcutRegistering
@@ -30,6 +35,7 @@ public final class StatusBarController {
     }
 
     public func toggleFromShortcut() {
+        guard !isShortcutSuspended() else { return }
         guard let button = statusItem.button else { return }
         if !popoverController.popover.isShown {
             onShortcutOpen?()

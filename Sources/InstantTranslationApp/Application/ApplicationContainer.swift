@@ -169,6 +169,10 @@ public final class ApplicationContainer {
         statusBar.onShortcutOpen = { [weak container] in
             container?.prepareClipboard()
         }
+        // 设置窗口构造后一直被持有，只有 isVisible 能区分"开着"和"关掉了"。
+        statusBar.isShortcutSuspended = { [weak settingsWindowController] in
+            settingsWindowController?.isSettingsWindowVisible ?? false
+        }
         return container
     }
 
