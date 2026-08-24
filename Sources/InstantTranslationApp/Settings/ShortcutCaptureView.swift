@@ -72,6 +72,27 @@ enum ShortcutCapturePolicy {
         123: "←", 124: "→", 125: "↓", 126: "↑",
     ]
 
+    static func isClearKey(keyCode: UInt16) -> Bool {
+        keyCode == 51 || keyCode == 117
+    }
+
+    /// 已生效的快捷键必须先清除才能重新录制。否则一聚焦就把当前值换成
+    /// “Press shortcut…”，用户连"现在绑的是哪个键"都看不到。
+    static func canBeginRecording(
+        shortcut: InstantTranslationInfrastructure.KeyboardShortcut?
+    ) -> Bool {
+        shortcut == nil
+    }
+
+    /// 点在控件之外就算失焦。AppKit 默认只有别的控件抢走 first responder 才会 resign，
+    /// 点窗口空白处焦点环会一直亮着，录制状态也停不下来。
+    static func shouldResignFocus(
+        clickedInsideBounds: Bool,
+        clickedInSameWindow: Bool
+    ) -> Bool {
+        !clickedInSameWindow || !clickedInsideBounds
+    }
+
     static func decision(
         keyCode: UInt16,
         carbonModifiers: UInt32
@@ -79,7 +100,7 @@ enum ShortcutCapturePolicy {
         if keyCode == 53 {
             return .cancel
         }
-        if keyCode == 51 || keyCode == 117 {
+        if isClearKey(keyCode: keyCode) {
             return .clear
         }
         if modifierKeyCodes.contains(keyCode) {
@@ -151,6 +172,16 @@ public struct ShortcutCaptureView: NSViewRepresentable {
         }
     }
 
+    /// 不报尺寸就会被 SwiftUI 撑满整行宽度，LabeledContent 于是把它甩到标签下一行，
+    /// 白白多占一行高度。这里交出固有尺寸，让它老实待在标签右边。
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: ShortcutRecorderView,
+        context: Context
+    ) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
     public func updateNSView(_ view: ShortcutRecorderView, context: Context) {
         let binding = $shortcut
         // NSView 会跨 SwiftUI 更新复用；先替换写回目标，避免继续持有首次 Binding。
@@ -170,6 +201,8 @@ public final class ShortcutRecorderView: NSView {
 
     private var session = ShortcutCaptureSession()
     private let changeSink: ShortcutChangeSink
+    private let clearButton = NSButton()
+    nonisolated(unsafe) private var outsideClickMonitor: Any?
 
     var isRecording: Bool { session.isRecording }
 
@@ -188,14 +221,64 @@ public final class ShortcutRecorderView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("Keyboard shortcut")
+        installClearButton()
         updateAccessibilityText()
+    }
+
+    /// 清除按钮贴在输入框尾部：原先只能靠"录制中按 Delete"清空，
+    /// 那条路径在界面上没有任何提示，等于没有。
+    private func installClearButton() {
+        clearButton.image = NSImage(
+            systemSymbolName: "xmark.circle.fill",
+            accessibilityDescription: "Clear shortcut"
+        )
+        clearButton.isBordered = false
+        clearButton.imagePosition = .imageOnly
+        clearButton.contentTintColor = .secondaryLabelColor
+        clearButton.target = self
+        clearButton.action = #selector(clearButtonPressed)
+        clearButton.toolTip = "Clear shortcut"
+        clearButton.setAccessibilityLabel("Clear shortcut")
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(clearButton)
+        NSLayoutConstraint.activate([
+            clearButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            clearButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            clearButton.widthAnchor.constraint(equalToConstant: 15),
+            clearButton.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        updateClearButtonVisibility()
+    }
+
+    private func updateClearButtonVisibility() {
+        // 没有值可清时按钮不出现，空输入框保持干净。
+        clearButton.isHidden = shortcut == nil
+    }
+
+    @objc private func clearButtonPressed() {
+        clear()
+    }
+
+    /// 清除并立刻进入录制：用户按下的下一组键就是新的快捷键。
+    @discardableResult
+    func clear() -> Bool {
+        guard shortcut != nil else { return false }
+        shortcut = nil
+        changeSink.send(nil)
+        if window?.makeFirstResponder(self) == true {
+            session.begin()
+        }
+        updatePresentation()
+        return true
     }
 
     required init?(coder: NSCoder) { nil }
 
     @discardableResult
     func beginRecordingFromClick() -> Bool {
-        guard window?.firstResponder === self else {
+        guard window?.firstResponder === self,
+              ShortcutCapturePolicy.canBeginRecording(shortcut: shortcut)
+        else {
             return false
         }
         session.begin()
@@ -252,6 +335,10 @@ public final class ShortcutRecorderView: NSView {
 
     public override func keyDown(with event: NSEvent) {
         guard session.isRecording else {
+            // 有值时聚焦并不进入录制态，此时 Delete 等价于点尾部的清除按钮。
+            if ShortcutCapturePolicy.isClearKey(keyCode: event.keyCode), clear() {
+                return
+            }
             super.keyDown(with: event)
             return
         }
@@ -278,15 +365,59 @@ public final class ShortcutRecorderView: NSView {
 
     public override func becomeFirstResponder() -> Bool {
         let becameFirstResponder = super.becomeFirstResponder()
-        if becameFirstResponder { needsDisplay = true }
+        if becameFirstResponder {
+            startObservingOutsideClicks()
+            needsDisplay = true
+        }
         return becameFirstResponder
     }
 
     public override func resignFirstResponder() -> Bool {
         cancelRecording()
+        stopObservingOutsideClicks()
         let resignedFirstResponder = super.resignFirstResponder()
         if resignedFirstResponder { needsDisplay = true }
         return resignedFirstResponder
+    }
+
+    /// AppKit 不会因为"点了空白处"就交出 first responder，必须自己盯着点击。
+    private func startObservingOutsideClicks() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            MainActor.assumeIsolated {
+                _ = self?.resignFocusIfClickLandedOutside(
+                    locationInWindow: event.locationInWindow,
+                    eventWindow: event.window
+                )
+            }
+            return event
+        }
+    }
+
+    private func stopObservingOutsideClicks() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
+        outsideClickMonitor = nil
+    }
+
+    /// 返回是否因为这次点击交出了焦点。落在控件外或落在别的窗口都算失焦：
+    /// 录制中断、焦点样式一并撤掉。
+    @discardableResult
+    func resignFocusIfClickLandedOutside(
+        locationInWindow: NSPoint,
+        eventWindow: NSWindow?
+    ) -> Bool {
+        guard let window, window.firstResponder === self else { return false }
+        let inside = bounds.contains(convert(locationInWindow, from: nil))
+        guard ShortcutCapturePolicy.shouldResignFocus(
+            clickedInsideBounds: inside,
+            clickedInSameWindow: eventWindow === window
+        ) else { return false }
+        window.makeFirstResponder(nil)
+        return true
     }
 
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -298,6 +429,7 @@ public final class ShortcutRecorderView: NSView {
             )
         }
         cancelRecording()
+        stopObservingOutsideClicks()
         super.viewWillMove(toWindow: newWindow)
     }
 
@@ -351,6 +483,9 @@ public final class ShortcutRecorderView: NSView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
     }
 
     @objc private func windowDidResignKey() {
@@ -359,6 +494,7 @@ public final class ShortcutRecorderView: NSView {
 
     private func updatePresentation() {
         needsDisplay = true
+        updateClearButtonVisibility()
         updateAccessibilityText()
         NSAccessibility.post(element: self, notification: .valueChanged)
     }

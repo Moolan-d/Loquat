@@ -68,6 +68,28 @@ final class ShortcutCaptureTests: XCTestCase {
         )
     }
 
+    func testPolicyAllowsRecordingOnlyWhenNoShortcutIsSet() {
+        XCTAssertTrue(ShortcutCapturePolicy.canBeginRecording(shortcut: nil))
+        XCTAssertFalse(
+            ShortcutCapturePolicy.canBeginRecording(
+                shortcut: RecordedShortcut(keyCode: 0, carbonModifiers: UInt32(cmdKey))
+            )
+        )
+    }
+
+    func testPolicyResignsFocusForAnyClickOutsideTheControl() {
+        XCTAssertFalse(ShortcutCapturePolicy.shouldResignFocus(
+            clickedInsideBounds: true, clickedInSameWindow: true
+        ))
+        XCTAssertTrue(ShortcutCapturePolicy.shouldResignFocus(
+            clickedInsideBounds: false, clickedInSameWindow: true
+        ))
+        // 点到别的窗口同样算失焦，哪怕坐标换算后落在自己的 bounds 里。
+        XCTAssertTrue(ShortcutCapturePolicy.shouldResignFocus(
+            clickedInsideBounds: true, clickedInSameWindow: false
+        ))
+    }
+
     func testSessionIgnoresDecisionsUntilRecordingBegins() {
         var session = ShortcutCaptureSession()
 
@@ -189,35 +211,77 @@ final class ShortcutCaptureTests: XCTestCase {
         )
     }
 
-    func testRecorderEscapeCancelsAndPreservesOriginalValue() {
+    func testRecorderEscapeCancelsWithoutCommittingAnything() {
         let original = RecordedShortcut(keyCode: 1, carbonModifiers: UInt32(optionKey))
         var changes: [RecordedShortcut?] = []
         let recorder = ShortcutRecorderView(shortcut: original) { changes.append($0) }
         let window = testWindow(containing: recorder)
         XCTAssertTrue(window.makeFirstResponder(recorder))
-        XCTAssertTrue(recorder.beginRecordingFromClick())
+        // 录制只能从清除后开始，所以 Esc 要守住的是"清空之后没有再写入"。
+        XCTAssertTrue(recorder.clear())
 
         recorder.handleKey(keyCode: 53, carbonModifiers: 0)
 
         XCTAssertFalse(recorder.isRecording)
-        XCTAssertEqual(recorder.shortcut, original)
-        XCTAssertTrue(changes.isEmpty)
+        XCTAssertNil(recorder.shortcut)
+        XCTAssertEqual(changes, [nil], "Esc 只结束录制，不该再提交一次")
     }
 
-    func testRecorderDeleteClearsAndEndsRecording() {
+    func testFocusingASetShortcutShowsItInsteadOfRecording() {
+        let original = RecordedShortcut(keyCode: 1, carbonModifiers: UInt32(optionKey))
+        let recorder = ShortcutRecorderView(shortcut: original, onChange: { _ in })
+        let window = testWindow(containing: recorder)
+
+        XCTAssertTrue(window.makeFirstResponder(recorder))
+
+        // 聚焦不吞掉当前值：用户得先看清现在绑的是哪个键，才谈得上换。
+        XCTAssertFalse(recorder.beginRecordingFromClick())
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertEqual(recorder.accessibilityValue() as? String, "⌥S")
+    }
+
+    func testClearingCommitsNilAndOnlyThenOpensRecording() {
         let original = RecordedShortcut(keyCode: 1, carbonModifiers: UInt32(optionKey))
         var changes: [RecordedShortcut?] = []
         let recorder = ShortcutRecorderView(shortcut: original) { changes.append($0) }
         let window = testWindow(containing: recorder)
         XCTAssertTrue(window.makeFirstResponder(recorder))
-        XCTAssertTrue(recorder.beginRecordingFromClick())
 
-        recorder.handleKey(keyCode: 117, carbonModifiers: 0)
+        XCTAssertTrue(recorder.clear())
 
-        XCTAssertFalse(recorder.isRecording)
         XCTAssertNil(recorder.shortcut)
         XCTAssertEqual(changes.count, 1)
         XCTAssertNil(changes.first!)
+        // 清完直接进入录制：用户按下的下一组键就是新快捷键。
+        XCTAssertTrue(recorder.isRecording)
+        XCTAssertFalse(recorder.clear(), "已经空了就没有可清的东西")
+    }
+
+    func testClickOutsideTheControlEndsRecordingAndFocus() {
+        let recorder = ShortcutRecorderView(onChange: { _ in })
+        let window = testWindow(containing: recorder)
+        recorder.frame = NSRect(x: 0, y: 0, width: 180, height: 28)
+        XCTAssertTrue(window.makeFirstResponder(recorder))
+        XCTAssertTrue(recorder.beginRecordingFromClick())
+
+        // 点在控件内不该失焦。
+        XCTAssertFalse(
+            recorder.resignFocusIfClickLandedOutside(
+                locationInWindow: NSPoint(x: 5, y: 5),
+                eventWindow: window
+            )
+        )
+        XCTAssertTrue(recorder.isRecording)
+
+        // 点窗口空白处就算失焦——不必等另一个控件抢走 first responder。
+        XCTAssertTrue(
+            recorder.resignFocusIfClickLandedOutside(
+                locationInWindow: NSPoint(x: 200, y: 60),
+                eventWindow: window
+            )
+        )
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(window.firstResponder === recorder)
     }
 
     func testRecorderCancelsWhenItLosesFocusOrItsWindowResignsKey() {
@@ -264,15 +328,16 @@ final class ShortcutCaptureTests: XCTestCase {
         let recorder = ShortcutRecorderView(shortcut: original, onChange: { _ in })
         let window = testWindow(containing: recorder)
         XCTAssertTrue(window.makeFirstResponder(recorder))
-        XCTAssertTrue(recorder.beginRecordingFromClick())
+        XCTAssertTrue(recorder.clear())
 
         recorder.handleKey(keyCode: 0, carbonModifiers: UInt32(cmdKey))
 
         XCTAssertFalse(recorder.isRecording)
         XCTAssertEqual(recorder.accessibilityValue() as? String, "⌘A")
 
-        XCTAssertTrue(recorder.beginRecordingFromClick())
-        recorder.shortcut = nil
+        // 提交值与当前值相同时 didSet 不触发，必须显式刷新，
+        // 否则界面会停在“Press shortcut…”。
+        XCTAssertTrue(recorder.clear())
         recorder.handleKey(keyCode: 51, carbonModifiers: 0)
 
         XCTAssertFalse(recorder.isRecording)
@@ -458,7 +523,8 @@ final class ShortcutCaptureTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(recorder.isRecording)
+        // Delete 等价于点尾部的清除按钮：清空并就地开始录制。
+        XCTAssertTrue(recorder.isRecording)
         XCTAssertNil(recorder.shortcut)
         XCTAssertEqual(changes.count, 1)
         if changes.count == 1 {
@@ -504,7 +570,8 @@ final class ShortcutCaptureTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(recorder.isRecording)
+        // Delete 等价于点尾部的清除按钮：清空并就地开始录制。
+        XCTAssertTrue(recorder.isRecording)
         XCTAssertNil(recorder.shortcut)
         XCTAssertEqual(changes.count, 1)
         if changes.count == 1 {
@@ -534,6 +601,7 @@ final class ShortcutCaptureTests: XCTestCase {
         XCTAssertEqual(second.writeCount, 0)
 
         updatedRecorder.mouseDown(with: mouseDownEvent(in: window))
+        XCTAssertTrue(updatedRecorder.clear())
         updatedRecorder.keyDown(
             with: keyDownEvent(
                 keyCode: 0,
@@ -549,7 +617,8 @@ final class ShortcutCaptureTests: XCTestCase {
             second.value,
             RecordedShortcut(keyCode: 0, carbonModifiers: UInt32(cmdKey))
         )
-        XCTAssertEqual(second.writeCount, 1)
+        // 清除与录入各写一次，且都落在替换后的 binding 上。
+        XCTAssertEqual(second.writeCount, 2)
     }
 
     private func testWindow(containing view: NSView) -> NSWindow {
