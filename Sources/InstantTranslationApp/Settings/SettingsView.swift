@@ -20,6 +20,18 @@ enum SettingsFunctionalGroup: Hashable {
     }
 }
 
+/// 设置页的排版密度集中在这里。窗口固定为 SettingsWindowMetrics.contentSize，
+/// 内容排不排得下只剩这一组数可调，散在各个视图里就没法整体收紧。
+enum SettingsDensity {
+    static let providerCardSpacing: CGFloat = 8
+    static let providerCardPadding: CGFloat = 10
+    static let providerHeaderSpacing: CGFloat = 8
+    static let providerFieldSpacing: CGFloat = 6
+    /// 提示词是可滚动的长文本，编辑器只需露出够改一句话的高度，
+    /// 撑到一屏会把下面的 Save 挤出可视区。
+    static let promptEditorHeight: CGFloat = 68
+}
+
 enum SettingsStatusEmphasis: Equatable {
     case secondary
     case success
@@ -510,8 +522,12 @@ public struct SettingsView: View {
             saveArea
         }
         .formStyle(.grouped)
-        .padding(16)
-        .frame(minWidth: 560, minHeight: 640)
+        // grouped Form 自带外边距，再叠一层 padding 只是把可用宽度白白让掉。
+        .controlSize(.small)
+        .frame(
+            minWidth: SettingsWindowMetrics.contentSize.width,
+            minHeight: 320
+        )
     }
 
     private var policy: SettingsPresentationPolicy {
@@ -548,12 +564,11 @@ public struct SettingsView: View {
     /// 两个二级模块整体只占 Form 的一行：Form 的行分隔线一旦穿过卡片，
     /// 卡片边界就会被切断，层级又退回"平级行"的观感。
     private var providerCards: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: SettingsDensity.providerCardSpacing) {
             ForEach(registry.providerGroups, id: \.self) { group in
                 providerCard(group)
             }
         }
-        .padding(.vertical, 4)
     }
 
     /// 层级靠容器建立而不是靠字重：section 卡片是外层，provider 是嵌在其中自带描边的一层，
@@ -563,7 +578,7 @@ public struct SettingsView: View {
         if let providerSwitch = group.providerSwitch {
             let isVisible = policy.showsDetails(for: group)
             let bodyControls = registry.bodyControls(in: group)
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: SettingsDensity.providerHeaderSpacing) {
                 providerCardHeader(
                     title: providerSwitch.title,
                     providerID: providerSwitch.providerID,
@@ -573,14 +588,18 @@ public struct SettingsView: View {
                 )
                 if !bodyControls.isEmpty {
                     Divider()
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    Grid(
+                        alignment: .leading,
+                        horizontalSpacing: 10,
+                        verticalSpacing: SettingsDensity.providerFieldSpacing
+                    ) {
                         ForEach(bodyControls) { descriptor in
                             providerFieldRow(descriptor)
                         }
                     }
                 }
             }
-            .padding(12)
+            .padding(SettingsDensity.providerCardPadding)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     // 关闭的模块整体减淡后退，但仍保留完整边界，不会看起来像被删掉了。
@@ -600,22 +619,22 @@ public struct SettingsView: View {
         isVisible: Bool,
         isOn: Binding<Bool>
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             // 图标与翻译窗口的卡片同源，设置项与它控制的那张卡片因此能对上号。
             ProviderIconView(
                 providerID: providerID,
                 llmBrand: ProviderBrandResolver.resolve(baseURL: model.llmBaseURL)
             )
             .opacity(isVisible ? 1 : 0.5)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(isVisible ? .primary : .secondary)
                 Text(SettingsPresentationPolicy.providerVisibilityCaption(isVisible: isVisible))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 8)
             Toggle(title, isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
@@ -669,9 +688,15 @@ public struct SettingsView: View {
             .padding(.leading, 20)
             .accessibilityLabel(descriptor.accessibilityLabel)
         case .globalShortcut:
-            LabeledContent("Global Shortcut") {
+            // 手写 HStack 而不是 LabeledContent：后者在 grouped Form 里会把录制控件
+            // 甩到标签下一行，一个字段白占两行高。
+            HStack(spacing: 12) {
+                Text("Global Shortcut")
+                Spacer(minLength: 8)
                 ShortcutCaptureView(shortcut: $model.globalShortcut)
+                    .frame(width: 180, height: 28)
             }
+            .accessibilityElement(children: .contain)
             .accessibilityLabel(descriptor.accessibilityLabel)
         case .credentialStatus:
             if let status = descriptor.value {
@@ -738,7 +763,7 @@ public struct SettingsView: View {
         case .generalPrompt:
             TextEditor(text: $model.generalPrompt)
                 .font(.body.monospaced())
-                .frame(minHeight: 100)
+                .frame(height: SettingsDensity.promptEditorHeight)
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .restoreGeneralPrompt:
             Button("Restore General Default") {
@@ -748,7 +773,7 @@ public struct SettingsView: View {
         case .technologyPrompt:
             TextEditor(text: $model.technologyAndRnDPrompt)
                 .font(.body.monospaced())
-                .frame(minHeight: 100)
+                .frame(height: SettingsDensity.promptEditorHeight)
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .restoreTechnologyPrompt:
             Button("Restore Technology & R&D Default") {

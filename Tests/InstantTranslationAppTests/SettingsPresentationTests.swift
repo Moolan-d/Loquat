@@ -632,6 +632,30 @@ final class SettingsPresentationTests: XCTestCase {
         controller.window?.orderOut(nil)
     }
 
+    func testSettingsWindowIsFixedSizeSoContentDensityIsTheOnlyLever() async {
+        let window = SettingsWindowController.makeProductionWindow(model: await makeModel())
+        defer { window.close() }
+
+        // 不可缩放：窗口尺寸固定，溢出交给 Form 自己滚动。
+        XCTAssertFalse(window.styleMask.contains(.resizable))
+        XCTAssertEqual(window.contentView?.frame.size, SettingsWindowMetrics.contentSize)
+    }
+
+    func testSettingsContentFitsInsideTheFixedWindowWidthWithoutHorizontalScrolling() async throws {
+        let model = await makeModel()
+        model.globalShortcut = KeyboardShortcut(keyCode: 49, carbonModifiers: 2304)
+        let window = SettingsWindowController.makeProductionWindow(model: model)
+        defer { window.close() }
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        // 宽度不能超过固定窗口，否则窗口不可缩放就再也看不到右侧内容。
+        XCTAssertLessThanOrEqual(
+            content.fittingSize.width,
+            SettingsWindowMetrics.contentSize.width
+        )
+    }
+
     func testReentrantOpenNotificationDuringConstructionCoalescesOnePresentation() async {
         let center = NotificationCenter()
         var constructionCount = 0

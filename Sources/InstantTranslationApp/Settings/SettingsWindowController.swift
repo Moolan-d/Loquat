@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// 设置窗口的固定尺寸。窗口不可缩放，这个值就是内容唯一能用的画布，
+/// 视图层的密度参数（SettingsDensity）都是按它定的。
+enum SettingsWindowMetrics {
+    static let contentSize = NSSize(width: 520, height: 620)
+}
+
 @MainActor
 public final class SettingsWindowController: NSWindowController {
     public let model: SettingsViewModel
@@ -99,8 +105,10 @@ public final class SettingsWindowController: NSWindowController {
 
     static func makeProductionWindow(model: SettingsViewModel) -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(origin: .zero, size: SettingsWindowMetrics.contentSize),
+            // 不可缩放：设置项是一份固定清单，没有需要用户自己放大的可变内容，
+            // 溢出由 Form 自身滚动消化。
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
@@ -108,7 +116,9 @@ public final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.center()
         window.contentView = NSHostingView(rootView: SettingsView(model: model))
-        window.setFrameAutosaveName("InstantTranslationSettingsWindow")
+        // autosave 名字带上尺寸版本：旧名下存着 620x700 的 frame，
+        // 沿用会把窗口重新撑回改版前的大小，位置记忆就得连同尺寸一起作废。
+        window.setFrameAutosaveName("InstantTranslationSettingsWindow.compact")
         return window
     }
 
