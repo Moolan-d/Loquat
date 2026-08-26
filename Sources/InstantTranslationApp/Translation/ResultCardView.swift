@@ -148,26 +148,27 @@ public struct ResultCardView: View {
                     Spacer()
                     copyButton(for: result)
                 }
-                ScrollView(.vertical) {
+                CardBodyScrollView(
+                    maximumHeight: TranslationResultLayout.llmBodyMaximumHeight
+                ) {
                     LLMResultContentView(
                         result: result,
                         contextExpansionState: contextExpansionState,
                         requestMoreContexts: requestMoreContexts
                     )
                 }
-                .frame(maxHeight: TranslationResultLayout.llmBodyMaximumHeight)
-                .scrollBounceBehavior(.basedOnSize)
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                // 一行里最高的是复制按钮，译文只有一行时若不夹紧就会被拉到按钮那么高，
+                // 文字贴着顶、底下空一截。夹紧之后三者按中线对齐。
+                HStack(alignment: .center, spacing: 8) {
                     ProviderIconView(providerID: providerID, llmBrand: llmBrand)
-                    ScrollView(.vertical) {
+                    CardBodyScrollView(
+                        maximumHeight: TranslationResultLayout.googleBodyMaximumHeight
+                    ) {
                         Text(result.primaryText)
                             .font(.title3)
                             .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxHeight: TranslationResultLayout.googleBodyMaximumHeight)
-                    .scrollBounceBehavior(.basedOnSize)
                     copyButton(for: result)
                 }
             }
@@ -250,6 +251,31 @@ public struct ResultCardView: View {
 }
 
 
+/// 只在内容真的超过上限时才滚动的正文容器。
+/// ScrollView 在竖直方向是贪心的——给它多少就占多少，于是一个词的译文也会把
+/// 卡片撑到上限那么高。这里量一次内容的自然高度，没超过上限就照实收窄。
+private struct CardBodyScrollView<Content: View>: View {
+    let maximumHeight: CGFloat
+    @ViewBuilder let content: Content
+
+    @State private var contentHeight: CGFloat?
+
+    var body: some View {
+        ScrollView(.vertical) {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    contentHeight = height
+                }
+        }
+        // 首帧还没量到高度，此时不设限，免得内容被压成 0 闪一下。
+        .frame(height: contentHeight.map { min($0, maximumHeight) })
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
 /// LLM 卡的正文全部内容。顺序即信息优先级：先给答案，再给理由，
 /// 再给分义项的展开，最后才是要花一次额外请求才拿得到的东西。
 private struct LLMResultContentView: View {
@@ -304,43 +330,55 @@ private struct LLMResultContentView: View {
 private struct SenseRowsView: View {
     let senses: [WordSense]
 
+    /// 标签栏宽度。写成常量而不是让 Grid 按最宽的标签自动定列宽，是因为
+    /// 首译义项和「更多语境」义项是上下堆着的两个 SenseRowsView：各自算各自的列宽，
+    /// 同一张卡里就会出现两条对不齐的正文左边缘。定死之后两批共用一条竖线。
+    ///
+    /// 66 大约容得下五个汉字或九个西文字母；label 是模型自由生成的，
+    /// 真遇到超长的分类就截断——它是索引，正文的可读宽度不该让给它。
+    private static let labelColumnWidth: CGFloat = 66
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(senses.enumerated()), id: \.offset) { _, sense in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        // 义项出处用描边小标签而不是加粗正文：它是分类，不是内容，
-                        // 视觉上得让位给右边真正要读的释义。
-                        Text(sense.label)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .overlay {
-                                Capsule()
-                                    .stroke(
-                                        Color(nsColor: .separatorColor),
-                                        lineWidth: 0.5
-                                    )
-                            }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // 义项出处用描边小标签而不是加粗正文：它是分类，不是内容，
+                    // 视觉上得让位给右边真正要读的释义。
+                    Text(sense.label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .overlay {
+                            Capsule()
+                                .stroke(
+                                    Color(nsColor: .separatorColor),
+                                    lineWidth: 0.5
+                                )
+                        }
+                        // 定宽的是槽位不是标签：胶囊仍按自身内容收紧，只是靠左摆进槽里。
+                        .frame(width: Self.labelColumnWidth, alignment: .leading)
+                    // 释义、例句、例句译文同属一栏，因此共用一条左边缘；
+                    // 标签退到槽位里，读的时候视线只需要跟着一条竖线往下走。
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(sense.meaning)
                             .font(.callout)
-                    }
-                    if let example = sense.example, !example.isEmpty {
-                        // 原文排斜体、译文不排：一眼能分出哪句是要学的，哪句是帮着看懂的。
-                        VStack(alignment: .leading, spacing: 1) {
+                        if let example = sense.example, !example.isEmpty {
+                            // 原文排斜体、译文不排：一眼能分出哪句是要学的，哪句是帮着看懂的。
                             Text(example)
                                 .font(.caption)
                                 .italic()
                                 .foregroundStyle(.secondary)
-                            if let translation = sense.exampleTranslation,
-                               !translation.isEmpty {
+                            if let translation = sense.exampleTranslation, !translation.isEmpty {
                                 Text(translation)
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

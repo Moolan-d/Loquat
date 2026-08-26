@@ -30,6 +30,25 @@ final class TranslationPopoverLayoutTests: XCTestCase {
         }
     }
 
+    func testShortResultsHugTheirContentInsteadOfFillingTheHeightCap() async throws {
+        let session = try await lookupSession(
+            googleText: "自我",
+            llm: Self.result(providerID: .llm, requestID: UUID(), text: "自我")
+        )
+        let host = render(session)
+
+        // ScrollView 竖直方向是贪心的：给多少占多少。不加约束的话，一个词的译文
+        // 也会被撑到整行最高元素（复制按钮）那么高，文字贴着顶、底下空一截。
+        for scroller in resultScrollViews(in: host) {
+            let content = try XCTUnwrap(scroller.documentView).frame.height
+            XCTAssertLessThanOrEqual(
+                scroller.frame.height,
+                content + 0.5,
+                "A short result should hug its content instead of leaving slack"
+            )
+        }
+    }
+
     func testGoogleAndLLMScrollersStayWithinTheirOwnHeightBudget() async throws {
         let session = try await lookupSession(
             googleText: Self.longText,
@@ -117,6 +136,13 @@ final class TranslationPopoverLayoutTests: XCTestCase {
             defer: false
         )
         window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        // 复刻 PopoverContentController 的两趟定尺：先量 fitting，再夹进上下界。
+        // 下界 200 才是关键——内容不够高时多出来的空间必须落到某个视图身上，
+        // 少了这一趟就看不出是谁把它吃掉了。
+        host.frame.size = PopoverContentMetrics.standard.size(
+            forFittingHeight: host.fittingSize.height
+        )
         host.layoutSubtreeIfNeeded()
         return host
     }
