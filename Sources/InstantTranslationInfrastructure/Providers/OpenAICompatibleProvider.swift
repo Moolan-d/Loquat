@@ -15,9 +15,10 @@ public struct LLMProviderConfiguration: Sendable {
     }
 }
 
-public struct OpenAICompatibleProvider: TranslationProvider {
+public struct OpenAICompatibleProvider: TranslationProvider, ContextExpansionProvider {
     public let id = ProviderID.llm
 
+    private let senseExpansion = SenseExpansionPolicy()
     private let transport: any HTTPTransport
     private let configuration: @Sendable (PromptPresetID) async throws -> LLMProviderConfiguration?
 
@@ -30,6 +31,50 @@ public struct OpenAICompatibleProvider: TranslationProvider {
     }
 
     public func translate(_ request: TranslationRequest) async throws -> TranslationResult {
+        let (content, duration) = try await responseContent(
+            for: request,
+            userPrompt: LLMUserPrompt.build(
+                for: request,
+                expandsSenses: senseExpansion.shouldExpand(request.text)
+            )
+        )
+        let parsed = try LLMResponseParser.parse(content)
+
+        return TranslationResult(
+            providerID: id,
+            requestID: request.id,
+            primaryText: parsed.translation,
+            rationale: parsed.rationale,
+            senses: parsed.senses,
+            phrases: parsed.phrases,
+            sourceLanguage: request.sourceLanguage,
+            targetLanguage: request.targetLanguage,
+            pronunciations: [],
+            speakableText: parsed.translation,
+            duration: duration
+        )
+    }
+
+    /// 用户点「更多语境」才走到这里，且只走这一次。刻意不从 translate 里调用：
+    /// 首译的成本要保持在一次请求，多数查询到此为止。
+    public func expandContext(
+        for request: TranslationRequest,
+        excluding existingResult: TranslationResult
+    ) async throws -> ContextExpansionResult {
+        let (content, _) = try await responseContent(
+            for: request,
+            userPrompt: LLMContextPrompt.build(for: request, excluding: existingResult)
+        )
+        let parsed = try LLMResponseParser.parseContextExpansion(content)
+        return ContextExpansionResult(requestID: request.id, senses: parsed.senses)
+    }
+
+    /// 两次请求共用的传输路径：凭据校验、endpoint 白名单、超时、错误映射、envelope 解析。
+    /// 抄第二遍的话，安全策略就会有两处各自演化的版本。
+    private func responseContent(
+        for request: TranslationRequest,
+        userPrompt: String
+    ) async throws -> (content: String, duration: Duration) {
         guard let configuration = try await configuration(request.promptPresetID) else {
             throw TranslationProviderError.unconfigured
         }
@@ -50,11 +95,6 @@ public struct OpenAICompatibleProvider: TranslationProvider {
         urlRequest.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let userPrompt = """
-        Source language: \(request.sourceLanguage.rawValue)
-        Target language: \(request.targetLanguage.rawValue)
-        Text: \(request.text)
-        """
         // OpenAI-compatible 服务差异较大；首版固定非流式响应，保持单次 envelope 解析与错误映射确定。
         urlRequest.httpBody = try JSONEncoder().encode(
             ChatRequest(
@@ -89,19 +129,7 @@ public struct OpenAICompatibleProvider: TranslationProvider {
         guard let content = envelope.choices.first?.message.content else {
             throw TranslationProviderError.invalidResponse
         }
-        let parsed = try LLMResponseParser.parse(content)
-
-        return TranslationResult(
-            providerID: id,
-            requestID: request.id,
-            primaryText: parsed.translation,
-            rationale: parsed.rationale,
-            sourceLanguage: request.sourceLanguage,
-            targetLanguage: request.targetLanguage,
-            pronunciations: [],
-            speakableText: parsed.translation,
-            duration: start.duration(to: clock.now)
-        )
+        return (content, start.duration(to: clock.now))
     }
 }
 

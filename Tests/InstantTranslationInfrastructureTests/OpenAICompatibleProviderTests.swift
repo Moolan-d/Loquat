@@ -129,7 +129,7 @@ final class OpenAICompatibleProviderTests: XCTestCase {
             .init(role: "system", content: DefaultPrompts.technologyAndRnD),
             .init(
                 role: "user",
-                content: "Source language: zh-Hans\nTarget language: en\nText: 编译器"
+                content: LLMUserPrompt.build(for: Self.request, expandsSenses: true)
             ),
         ])
         XCTAssertEqual(result.providerID, .llm)
@@ -137,6 +137,160 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         XCTAssertEqual(result.primaryText, "compiler")
         XCTAssertEqual(result.rationale, "Standard term.")
         XCTAssertEqual(result.speakableText, "compiler")
+    }
+
+    func testUserPromptCarriesTheJSONContractAndTheInputItself() {
+        let prompt = LLMUserPrompt.build(for: Self.request, expandsSenses: false)
+
+        XCTAssertTrue(prompt.contains("Source language: zh-Hans"))
+        XCTAssertTrue(prompt.contains("Target language: en"))
+        XCTAssertTrue(prompt.contains("Text: 编译器"))
+        // 契约归代码：系统提示词是用户可改的，字段约定不能只写在那边。
+        XCTAssertTrue(prompt.contains(#""translation""#))
+        XCTAssertFalse(DefaultPrompts.general.contains(#""translation""#))
+        XCTAssertFalse(DefaultPrompts.technologyAndRnD.contains(#""translation""#))
+    }
+
+    func testFirstLookupPromptStaysCompactAndSkipsNicheContexts() {
+        let lookup = LLMUserPrompt.build(for: Self.request, expandsSenses: true)
+
+        XCTAssertTrue(lookup.contains("at most 3"))
+        XCTAssertTrue(lookup.contains("at most 1"))
+        XCTAssertTrue(lookup.contains(#""exampleTranslation""#))
+        XCTAssertTrue(lookup.contains("Do not repeat"))
+        XCTAssertTrue(lookup.contains("up to 3 distinct target-language equivalents"))
+        // 网络、亚文化义项移到了点击后的第二次请求，首译不该主动去要。
+        XCTAssertFalse(lookup.contains("include slang or internet usage whenever"))
+    }
+
+    func testUserPromptOnlyAsksForSensesWhenTheInputLooksLikeALookup() {
+        let lookup = LLMUserPrompt.build(for: Self.request, expandsSenses: true)
+        let sentence = LLMUserPrompt.build(for: Self.request, expandsSenses: false)
+
+        XCTAssertTrue(lookup.contains(#""senses""#))
+        XCTAssertTrue(lookup.contains(#""phrases""#))
+        // 翻译整句时义项无处可用，指令必须整段消失，而不是让模型自己判断要不要理会。
+        XCTAssertFalse(sentence.contains(#""senses""#))
+        XCTAssertFalse(sentence.contains(#""phrases""#))
+        XCTAssertFalse(sentence.contains(#""exampleTranslation""#))
+    }
+
+    func testContextPromptCarriesWhatWasAlreadyCoveredAndAsksOnlyForSenses() {
+        let existing = Self.makeResult(
+            senses: [.init(label: "心理学", meaning: "自我意识", example: nil)]
+        )
+
+        let prompt = LLMContextPrompt.build(for: Self.request, excluding: existing)
+
+        XCTAssertTrue(prompt.contains("Text: 编译器"))
+        XCTAssertTrue(prompt.contains("Existing translation: 自我；自尊心；自负"))
+        // 已覆盖的义项必须原样带上，否则第二次请求会把第一次的内容再说一遍。
+        XCTAssertTrue(prompt.contains("- 心理学: 自我意识"))
+        XCTAssertTrue(prompt.contains("additional"))
+        XCTAssertTrue(prompt.contains(#""senses""#))
+        // 搭配、主译文、rationale 首译已经给过了，这次要明说别再给一遍。
+        XCTAssertTrue(
+            prompt.contains(#"Do not add "translation", "rationale", or "phrases""#)
+        )
+    }
+
+    func testContextPromptSaysNoneWhenTheFirstResponseCarriedNoSenses() {
+        let prompt = LLMContextPrompt.build(for: Self.request, excluding: Self.makeResult())
+
+        XCTAssertTrue(prompt.contains("- none"))
+    }
+
+    func testFirstResponseIsCompactedToThreeSensesAndOneCollocation() throws {
+        let parsed = try LLMResponseParser.parse(
+            #"{"translation":"自我；自尊心；自负","rationale":"核心义是人的自我意识。","senses":[{"label":"心理学","meaning":"自我意识"},{"label":"日常","meaning":"自尊心、面子","example":"His ego was bruised.","exampleTranslation":"他的自尊心受挫了。"},{"label":"贬义","meaning":"自负、以自我为中心"},{"label":"贬义","meaning":"自负、以自我为中心"}],"phrases":[{"phrase":"alter ego","meaning":"另一个自我"},{"phrase":"ego boost","meaning":"提升自信"}]}"#
+        )
+
+        // 上限在解析器一处收口；模型多给了就在这里截断，界面不再重复一遍限额。
+        XCTAssertEqual(parsed.senses.count, 3)
+        XCTAssertEqual(parsed.phrases, [.init(phrase: "alter ego", meaning: "另一个自我")])
+        XCTAssertEqual(parsed.senses[1].example, "His ego was bruised.")
+        XCTAssertEqual(parsed.senses[1].exampleTranslation, "他的自尊心受挫了。")
+        XCTAssertNil(parsed.senses[0].example)
+        XCTAssertNil(parsed.senses[0].exampleTranslation)
+    }
+
+    func testDuplicateSensesAreRemovedByMeaningRegardlessOfLabel() throws {
+        let parsed = try LLMResponseParser.parse(
+            #"{"translation":"自我","senses":[{"label":"日常","meaning":" 自尊心 "},{"label":"口语","meaning":"自尊心"},{"label":"心理学","meaning":"自我意识"},{"label":"贬义","meaning":""}]}"#
+        )
+
+        // 同一个释义换个标签再来一遍是模型的常见浪费；按释义去重，先到的留下。
+        XCTAssertEqual(parsed.senses.map(\.label), ["日常", "心理学"])
+        XCTAssertEqual(parsed.senses[0].meaning, "自尊心")
+    }
+
+    func testContextExpansionParsesSensesOnlyAndClampsToThree() throws {
+        let parsed = try LLMResponseParser.parseContextExpansion(
+            #"{"senses":[{"label":"网络","meaning":"自恋"},{"label":"游戏","meaning":"上头"},{"label":"嘻哈","meaning":"面子"},{"label":"多余","meaning":"第四条"}]}"#
+        )
+
+        XCTAssertEqual(parsed.senses.count, 3)
+        XCTAssertEqual(parsed.senses.map(\.label), ["网络", "游戏", "嘻哈"])
+    }
+
+    func testEmptyContextExpansionSucceedsButMalformedOneFails() throws {
+        // 「没有更多语境可说」是一个正常答案，不是错误。
+        XCTAssertEqual(try LLMResponseParser.parseContextExpansion(#"{"senses":[]}"#).senses, [])
+
+        for content in ["not json", "", #"{"translation":"自我"}"#] {
+            XCTAssertThrowsError(try LLMResponseParser.parseContextExpansion(content)) { error in
+                XCTAssertEqual(error as? TranslationProviderError, .invalidResponse)
+            }
+        }
+    }
+
+    func testDecorativeFieldsNeverCostTheTranslationThatWasAlreadyInHand() throws {
+        // senses 整段类型不对、个别条目缺字段、phrases 是字符串——译文都得照常交付。
+        let parsed = try LLMResponseParser.parse(
+            #"{"translation":"牛肉","senses":"抱怨","phrases":"beef up"}"#
+        )
+        XCTAssertEqual(parsed.translation, "牛肉")
+        XCTAssertEqual(parsed.senses, [])
+        XCTAssertEqual(parsed.phrases, [])
+
+        let partial = try LLMResponseParser.parse(
+            #"{"translation":"牛肉","senses":[{"label":"俚语"},{"label":"基本义","meaning":"牛肉"}]}"#
+        )
+        // 坏掉的是一条，不是一整块：另一条仍旧呈现。
+        XCTAssertEqual(partial.senses, [.init(label: "基本义", meaning: "牛肉", example: nil)])
+    }
+
+    func testContextExpansionIsASecondRequestThatFirstTranslationNeverTriggers() async throws {
+        let transport = StubHTTPTransport(responses: [
+            .init(
+                statusCode: 200,
+                body: #"{"choices":[{"message":{"content":"{\"translation\":\"自我\",\"senses\":[{\"label\":\"心理学\",\"meaning\":\"自我意识\"}],\"phrases\":[{\"phrase\":\"alter ego\",\"meaning\":\"另一个自我\"}]}"}}]}"#
+            ),
+            .init(
+                statusCode: 200,
+                body: #"{"choices":[{"message":{"content":"{\"senses\":[{\"label\":\"网络\",\"meaning\":\"自恋\"}]}"}}]}"#
+            ),
+        ])
+        let provider = Self.provider(transport: transport)
+
+        let initial = try await provider.translate(Self.request)
+
+        // 首译只发一次；网络义项要等用户开口才去要。
+        var requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(initial.phrases.count, 1)
+
+        let expansion = try await provider.expandContext(for: Self.request, excluding: initial)
+
+        requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(expansion.requestID, Self.request.id)
+        XCTAssertEqual(expansion.senses.map(\.label), ["网络"])
+        let secondBody = String(
+            data: try XCTUnwrap(requests[1].httpBody),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(secondBody.contains("additional"))
     }
 
     func testMissingOrBlankRequiredConfigurationIsUnconfiguredWithoutSending() async {
@@ -292,6 +446,22 @@ final class OpenAICompatibleProviderTests: XCTestCase {
 
         XCTAssertEqual(result.primaryText, "compiler")
         XCTAssertNil(result.rationale)
+    }
+
+    private static func makeResult(senses: [WordSense] = []) -> TranslationResult {
+        TranslationResult(
+            providerID: .llm,
+            requestID: request.id,
+            primaryText: "自我；自尊心；自负",
+            rationale: nil,
+            senses: senses,
+            phrases: [],
+            sourceLanguage: request.sourceLanguage,
+            targetLanguage: request.targetLanguage,
+            pronunciations: [],
+            speakableText: "自我；自尊心；自负",
+            duration: .zero
+        )
     }
 
     private static let request = TranslationRequest(
