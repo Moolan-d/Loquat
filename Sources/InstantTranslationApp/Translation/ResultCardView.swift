@@ -13,6 +13,19 @@ enum TranslationPresentationStyle {
 /// 两个数字不是各自独立的偏好：外层滚动没了之后，超过弹窗上限的内容就是够不着的，
 /// 所以「两者之和 + 卡片框架 + 输入框长到三行」必须仍然装得进 560。
 /// TranslationPopoverLayoutTests 会实测这条不变量，改动任一个数字都得先过那一关。
+/// 卡片正文的三层字号。macOS 上 callout/subheadline/caption 只差 1pt，
+/// 各处零散地挑一个，读起来就是一片糊在一起的灰。译文卡的正文只留三级：
+/// 译文 13、要读的内容 11、辅助说明 10，正文里的每一处文字都得归进其中一级。
+/// 空闲与加载态的服务名不在此列——那是卡片外壳，跟正文不同时出现。
+enum TranslationResultTypography {
+    /// 译文本身。这一级只有它，别的东西升不上来。
+    static let translation = Font.body.weight(.semibold)
+    /// 真正要读的内容：义项释义、搭配、入口标题。
+    static let content = Font.subheadline
+    /// 围着内容转的：说明、例句、例句译文、标签、状态。
+    static let supporting = Font.caption
+}
+
 enum TranslationResultLayout {
     /// Google 只有一段译文。短词自然是一行；长句先撑到约四行，再往下自己滚。
     static let googleBodyMaximumHeight: CGFloat = 96
@@ -286,11 +299,11 @@ private struct LLMResultContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(result.primaryText)
-                .font(.body.weight(.semibold))
+                .font(TranslationResultTypography.translation)
                 .textSelection(.enabled)
             if let rationale = result.rationale, !rationale.isEmpty {
                 Text(rationale)
-                    .font(.callout)
+                    .font(TranslationResultTypography.supporting)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -307,7 +320,7 @@ private struct LLMResultContentView: View {
                 ForEach(Array(phrases.enumerated()), id: \.offset) { _, phrase in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(phrase.phrase)
-                            .font(.callout.weight(.medium))
+                            .font(TranslationResultTypography.content.weight(.medium))
                         Text(phrase.meaning)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -364,7 +377,7 @@ private struct SenseRowsView: View {
                     // 标签退到槽位里，读的时候视线只需要跟着一条竖线往下走。
                     VStack(alignment: .leading, spacing: 2) {
                         Text(sense.meaning)
-                            .font(.caption)
+                            .font(TranslationResultTypography.content)
                         if let example = sense.example, !example.isEmpty {
                             // 原文排斜体、译文不排：一眼能分出哪句是要学的，哪句是帮着看懂的。
                             Text(example)
@@ -440,7 +453,7 @@ private struct ContextExpansionSectionView: View {
                 Image(systemName: "sparkles")
                 VStack(alignment: .leading, spacing: 1) {
                     Text("More Contexts")
-                        .font(.callout)
+                        .font(TranslationResultTypography.content)
                     Text("Generated on demand by AI")
                         .font(.caption)
                         .foregroundStyle(.secondary)

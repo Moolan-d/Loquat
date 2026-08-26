@@ -104,8 +104,13 @@ public struct TranslationView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
+                        // 撑满第一行的高度，好在那一行里居中。HStack 是 .top 对齐，
+                        // 输入长到两三行时它仍旧待在第一行，不会飘到中间去。
+                        .frame(height: TranslationInputField.fallbackMetrics.minimumHeight)
                 }
-                .buttonStyle(.borderless)
+                // borderless 在 macOS 上悬停会画出一块自己的浅色圆角，
+                // 看着像输入框右边另外贴了个方块。plain 才是干净的图标按钮。
+                .buttonStyle(.plain)
                 .opacity(session.input.isEmpty ? 0 : 1)
                 .disabled(session.input.isEmpty)
                 .accessibilityHidden(session.input.isEmpty)
