@@ -9,11 +9,15 @@ enum TranslationPresentationStyle {
 
 /// 卡片正文的高度上限，两张卡各一份。溢出在这里被关进卡片内部，
 /// 弹窗本身因此不需要再有一个跨卡片的滚动区。
+///
+/// 两个数字不是各自独立的偏好：外层滚动没了之后，超过弹窗上限的内容就是够不着的，
+/// 所以「两者之和 + 卡片框架 + 输入框长到三行」必须仍然装得进 560。
+/// TranslationPopoverLayoutTests 会实测这条不变量，改动任一个数字都得先过那一关。
 enum TranslationResultLayout {
     /// Google 只有一段译文。短词自然是一行；长句先撑到约四行，再往下自己滚。
     static let googleBodyMaximumHeight: CGFloat = 96
-    /// LLM 卡装着译文、说明、义项、搭配和按需语境，需要宽裕得多的预算。
-    static let llmBodyMaximumHeight: CGFloat = 330
+    /// LLM 卡装着译文、说明、义项、搭配和按需语境，剩下的预算全给它。
+    static let llmBodyMaximumHeight: CGFloat = 264
 }
 
 @MainActor

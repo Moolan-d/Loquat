@@ -509,15 +509,6 @@ final class TranslationPresentationTests: XCTestCase {
         )
     }
 
-    func testCardBodyHeightCapsLeaveRoomForBothCardsInsideThePopover() {
-        // 两张卡的正文上限加上各自的框架开销，必须仍装得进弹窗；
-        // 任何一个数字调大都得先在这里过一遍，而不是等真机上撑破了才发现。
-        let bodyBudget = TranslationResultLayout.googleBodyMaximumHeight
-            + TranslationResultLayout.llmBodyMaximumHeight
-
-        XCTAssertLessThan(bodyBudget, PopoverContentMetrics.standard.maximumHeight)
-    }
-
     private func makeResult(
         providerID: ProviderID,
         requestID: UUID = UUID(),

@@ -185,7 +185,9 @@ private struct TranslationHeader: View {
     }
 }
 
-private struct TranslationInputField: NSViewRepresentable {
+/// 非 private：输入框的高度策略参与弹窗的整体高度预算，
+/// 布局测试要读它的 fallbackMetrics 才能算出最坏情况。
+struct TranslationInputField: NSViewRepresentable {
     static let font = NSFont.preferredFont(forTextStyle: .body)
     static let textInset: CGFloat = 4
 
