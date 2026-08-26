@@ -122,6 +122,22 @@ final class TranslationPresentationTests: XCTestCase {
         XCTAssertEqual(controller.copiedProviderID, .llm)
     }
 
+    func testCopyStillTakesOnlyTheTranslationWhenSensesArePresent() {
+        let pasteboard = FakePasteboard()
+        let controller = CopyController(pasteboard: pasteboard)
+        let result = makeResult(
+            providerID: .llm,
+            primaryText: "牛肉",
+            senses: [.init(label: "俚语", meaning: "抱怨、牢骚", example: nil)],
+            phrases: [.init(phrase: "beef up", meaning: "加强")]
+        )
+
+        controller.copy(result)
+
+        // ⧉ 的含义始终是"把译文拿走"；义项要引用就靠手动划选。
+        XCTAssertEqual(pasteboard.value, "牛肉")
+    }
+
     func testAccessibilityLabelsAreStable() {
         XCTAssertEqual(
             TranslationAccessibility.copyLabel(providerID: .google),
@@ -463,17 +479,60 @@ final class TranslationPresentationTests: XCTestCase {
         )
     }
 
+    func testOnlyFirstCollocationIsVisible() {
+        let result = makeResult(
+            providerID: .llm,
+            primaryText: "自我；自尊心；自负",
+            phrases: [
+                .init(phrase: "alter ego", meaning: "另一个自我"),
+                .init(phrase: "ego boost", meaning: "提升自信"),
+            ]
+        )
+
+        // 解析器已经截到 1 条；视图层再兜一次，因为卡片高度预算只留得下一行。
+        XCTAssertEqual(
+            TranslationResultsPresentation.visiblePhrases(result).map(\.phrase),
+            ["alter ego"]
+        )
+    }
+
+    func testMoreContextsActionOnlyAppearsWhenAvailableOrFailed() {
+        XCTAssertTrue(TranslationResultsPresentation.showsMoreContextsAction(.available))
+        XCTAssertTrue(TranslationResultsPresentation.showsMoreContextsAction(.failure))
+        XCTAssertFalse(TranslationResultsPresentation.showsMoreContextsAction(.unavailable))
+        XCTAssertFalse(TranslationResultsPresentation.showsMoreContextsAction(.loading))
+        // 已经拿到结果之后入口就该消失，否则用户会以为还能再要一份。
+        XCTAssertFalse(
+            TranslationResultsPresentation.showsMoreContextsAction(
+                .success(.init(requestID: UUID(), senses: []))
+            )
+        )
+    }
+
+    func testCardBodyHeightCapsLeaveRoomForBothCardsInsideThePopover() {
+        // 两张卡的正文上限加上各自的框架开销，必须仍装得进弹窗；
+        // 任何一个数字调大都得先在这里过一遍，而不是等真机上撑破了才发现。
+        let bodyBudget = TranslationResultLayout.googleBodyMaximumHeight
+            + TranslationResultLayout.llmBodyMaximumHeight
+
+        XCTAssertLessThan(bodyBudget, PopoverContentMetrics.standard.maximumHeight)
+    }
+
     private func makeResult(
         providerID: ProviderID,
         requestID: UUID = UUID(),
         primaryText: String,
-        rationale: String? = nil
+        rationale: String? = nil,
+        senses: [WordSense] = [],
+        phrases: [PhraseUsage] = []
     ) -> TranslationResult {
         TranslationResult(
             providerID: providerID,
             requestID: requestID,
             primaryText: primaryText,
             rationale: rationale,
+            senses: senses,
+            phrases: phrases,
             sourceLanguage: providerID == .google ? .english : .simplifiedChinese,
             targetLanguage: providerID == .google ? .simplifiedChinese : .english,
             pronunciations: [],

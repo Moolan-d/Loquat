@@ -162,6 +162,22 @@ public enum TranslationResultsPresentation {
         !input.isEmpty || states.values.contains { $0 != .idle }
     }
 
+    /// 搭配只显示最有用的那一条。解析器已经截过一次，这里再截一次不是重复：
+    /// 卡片的高度预算只留得下一行，视图不该指望上游永远守约。
+    public static func visiblePhrases(_ result: TranslationResult) -> [PhraseUsage] {
+        Array(result.phrases.prefix(1))
+    }
+
+    /// 「更多语境」的入口只在「可以点」的时候出现：还没点过，或者点过但失败了。
+    /// 加载中要让位给进度提示，已成功则结果本身就在下面，再摆一个入口只会让人
+    /// 以为还能再要一份。
+    public static func showsMoreContextsAction(_ state: ContextExpansionState) -> Bool {
+        switch state {
+        case .available, .failure: true
+        case .unavailable, .loading, .success: false
+        }
+    }
+
     public static func idleStatus(isConfigured: Bool) -> TranslationIdleStatus {
         isConfigured ? .ready : .notConfigured
     }

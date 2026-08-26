@@ -11,7 +11,8 @@ private final class AppearanceAwareVisualEffectView: NSVisualEffectView {
 }
 
 /// 弹窗尺寸策略：宽度固定，高度跟随内容的 fitting size，并夹在上下界之间。
-/// 上界避免长译文把弹窗顶出屏幕（超出部分由结果区自身滚动消化）。
+/// 上界避免长译文把弹窗顶出屏幕；超出部分由各张结果卡片内部滚动消化，
+/// 因此正常情况下 fitting size 本来就到不了上界。
 struct PopoverContentMetrics: Equatable {
     /// 生产配置的唯一来源，测试直接断言它，改了production值测试就会红。
     static let standard = PopoverContentMetrics(

@@ -36,7 +36,6 @@ public struct TranslationView: View {
 
     /// 弹窗内容宽度的唯一来源：`PopoverContentMetrics.standard` 也读它，两处不能各写各的。
     nonisolated static let contentWidth: CGFloat = 370
-    private static let maximumResultsHeight: CGFloat = 420
 
     private var shownDirection: TranslationDirection {
         if let request = session.activeRequest {
@@ -70,15 +69,28 @@ public struct TranslationView: View {
                 },
                 swap: { session.swapDirectionAndResubmit() }
             )
-            TranslationInputField(
-                text: $session.input,
-                focusController: focusController,
-                onSubmit: {
-                    session.submit(rawText: session.input, sourceID: .manual)
-                },
-                onHeightChange: { resolvedInputHeight = $0 }
-            )
-            .frame(height: resolvedInputHeight)
+            // 提示语收进输入框内部：它是这个控件的说明，摆在框外自成一行时，
+            // 既占掉一行高度，又像是在对整个弹窗说话。
+            HStack(alignment: .bottom, spacing: 6) {
+                TranslationInputField(
+                    text: $session.input,
+                    focusController: focusController,
+                    onSubmit: {
+                        session.submit(rawText: session.input, sourceID: .manual)
+                    },
+                    onHeightChange: { resolvedInputHeight = $0 }
+                )
+                .frame(height: resolvedInputHeight)
+                Text("Enter to translate")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    // 点在提示语上应当照样落进输入框；它也不必再报一次可访问性，
+                    // 输入框自己已经有标签了。
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .padding(.bottom, 3)
+            }
+            .padding(.horizontal, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
@@ -87,46 +99,44 @@ public struct TranslationView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
-            HStack {
-                if session.requiresManualClipboardConfirmation {
-                    Text("Clipboard text exceeds 500 characters. Press Enter to translate.")
-                }
-                Spacer()
-                Text("Enter to translate")
+            if session.requiresManualClipboardConfirmation {
+                Text("Clipboard text exceeds 500 characters. Press Enter to translate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
             if let emptyStateReason {
                 TranslationEmptyStateView(
                     reason: emptyStateReason,
                     openSettings: openSettings
                 )
             } else {
-                // 结果区整体滚动：长译文不再把弹窗撑破，也不截断任何一张卡片的正文。
-                ScrollView(.vertical) {
-                    VStack(spacing: 10) {
-                        ForEach(
-                            TranslationResultsPresentation.visibleProviderIDs(
-                                enabled: session.enabledProviderIDs
-                            ),
-                            id: \.self
-                        ) { providerID in
-                            ResultCardView(
-                                providerID: providerID,
-                                state: session.states[providerID] ?? .idle,
-                                llmBrand: appearance.llmBrand,
-                                isConfigured: availability.configuredProviderIDs
-                                    .contains(providerID),
-                                copyController: copyController,
-                                retry: { session.retry(providerID: providerID) },
-                                openSettings: openSettings
-                            )
-                        }
+                // 卡片直接排布，不套外层滚动：溢出归各自卡片内部消化。
+                // 结果区整体滚动会把 Google 卡和输入框一起带跑，
+                // 而用户滚的其实只是 LLM 那一张的正文。
+                VStack(spacing: 10) {
+                    ForEach(
+                        TranslationResultsPresentation.visibleProviderIDs(
+                            enabled: session.enabledProviderIDs
+                        ),
+                        id: \.self
+                    ) { providerID in
+                        ResultCardView(
+                            providerID: providerID,
+                            state: session.states[providerID] ?? .idle,
+                            llmBrand: appearance.llmBrand,
+                            isConfigured: availability.configuredProviderIDs
+                                .contains(providerID),
+                            contextExpansionState: providerID == .llm
+                                ? session.contextExpansionState
+                                : .unavailable,
+                            copyController: copyController,
+                            retry: { session.retry(providerID: providerID) },
+                            requestMoreContexts: { session.requestMoreContexts() },
+                            openSettings: openSettings
+                        )
                     }
-                    .padding(.bottom, 2)
                 }
-                .frame(maxHeight: Self.maximumResultsHeight)
-                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .padding(14)
