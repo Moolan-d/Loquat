@@ -364,7 +364,7 @@ private struct SenseRowsView: View {
                     // 标签退到槽位里，读的时候视线只需要跟着一条竖线往下走。
                     VStack(alignment: .leading, spacing: 2) {
                         Text(sense.meaning)
-                            .font(.callout)
+                            .font(.caption)
                         if let example = sense.example, !example.isEmpty {
                             // 原文排斜体、译文不排：一眼能分出哪句是要学的，哪句是帮着看懂的。
                             Text(example)

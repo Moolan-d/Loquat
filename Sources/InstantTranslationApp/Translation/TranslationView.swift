@@ -71,27 +71,46 @@ public struct TranslationView: View {
             )
             // 提示语当 placeholder 用：摆在输入框旁边时它一直占着一条竖栏，
             // 长文本被挤成窄窄一条；而它本来就只在框还空着的时候有话要说。
-            TranslationInputField(
-                text: $session.input,
-                focusController: focusController,
-                onSubmit: {
-                    session.submit(rawText: session.input, sourceID: .manual)
-                },
-                onHeightChange: { resolvedInputHeight = $0 }
-            )
-            .frame(height: resolvedInputHeight)
-            .overlay(alignment: .topLeading) {
-                if session.input.isEmpty {
-                    // 字体和内边距都跟输入框对齐，让它正好落在第一个字将要出现的位置。
-                    Text("Enter to translate")
-                        .font(Font(TranslationInputField.font))
-                        .foregroundStyle(.tertiary)
-                        .padding(TranslationInputField.textInset)
-                        // 点在提示语上应当照样落进输入框；它也不必再报一次可访问性，
-                        // 输入框自己已经有标签了。
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+            HStack(alignment: .top, spacing: 2) {
+                TranslationInputField(
+                    text: $session.input,
+                    focusController: focusController,
+                    onSubmit: {
+                        session.submit(rawText: session.input, sourceID: .manual)
+                    },
+                    onHeightChange: { resolvedInputHeight = $0 }
+                )
+                .frame(height: resolvedInputHeight)
+                // 靠右而不是靠左：靠左时光标正好压在提示语第一个字上，
+                // 像是框里已经有字了。右端是空的，让给它。
+                .overlay(alignment: .topTrailing) {
+                    if session.input.isEmpty {
+                        Text("Enter to translate")
+                            .font(Font(TranslationInputField.font))
+                            .foregroundStyle(.tertiary)
+                            .padding(TranslationInputField.textInset)
+                            // 点在提示语上应当照样落进输入框；它也不必再报一次可访问性，
+                            // 输入框自己已经有标签了。
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                 }
+                // 清除键的位置常驻：只靠 opacity 藏起来，不参与显隐时的重排。
+                // 否则敲下第一个字的瞬间输入框会缩一截，正在打的那行跟着回流。
+                Button {
+                    session.reset()
+                    // 清空后光标该回到输入框：用户下一步一定是重新输入。
+                    focusController.requestFocus()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.borderless)
+                .opacity(session.input.isEmpty ? 0 : 1)
+                .disabled(session.input.isEmpty)
+                .accessibilityHidden(session.input.isEmpty)
+                .accessibilityLabel("Clear input")
+                .padding(.trailing, 2)
             }
             .padding(.horizontal, 4)
             .background(
