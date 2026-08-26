@@ -29,4 +29,29 @@ final class TranslationModelsTests: XCTestCase {
         XCTAssertEqual(result.pronunciations, [pronunciation])
         XCTAssertEqual(result.speakableText, "compiler")
     }
+
+    func testWordSenseCarriesOptionalBilingualExample() {
+        let sense = WordSense(
+            label: "日常",
+            meaning: "自尊心、面子",
+            example: "His ego was bruised.",
+            exampleTranslation: "他的自尊心受挫了。"
+        )
+
+        // 例句与译文分开存：原文要斜体、译文不要，混成一个字符串就没法分开排版。
+        XCTAssertEqual(sense.example, "His ego was bruised.")
+        XCTAssertEqual(sense.exampleTranslation, "他的自尊心受挫了。")
+    }
+
+    func testContextExpansionIsBoundToOriginalRequest() {
+        let requestID = UUID()
+        let expansion = ContextExpansionResult(
+            requestID: requestID,
+            senses: [.init(label: "网络", meaning: "过度自我关注", example: nil)]
+        )
+
+        // 补充语境是第二次请求的产物，迟到的那份得能认出自己属于哪一轮。
+        XCTAssertEqual(expansion.requestID, requestID)
+        XCTAssertEqual(expansion.senses.count, 1)
+    }
 }

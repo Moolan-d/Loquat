@@ -59,6 +59,28 @@ public struct TranslationCoordinator: Sendable {
         }
     }
 
+    /// 补充语境只走 LLM，且只在它确实具备这个能力时。刻意不遍历 providers、
+    /// 也不开第二个任务组：这是一次独立请求，不该和并行首译共用生命周期。
+    public func expandContext(
+        for request: TranslationRequest,
+        excluding existingResult: TranslationResult
+    ) async -> Result<ContextExpansionResult, TranslationProviderError> {
+        guard let provider = providers[.llm] as? any ContextExpansionProvider else {
+            return .failure(.unconfigured)
+        }
+        do {
+            return .success(
+                try await provider.expandContext(for: request, excluding: existingResult)
+            )
+        } catch let error as TranslationProviderError {
+            return .failure(error)
+        } catch is CancellationError {
+            return .failure(.cancelled)
+        } catch {
+            return .failure(.invalidResponse)
+        }
+    }
+
     public func retry(
         providerID: ProviderID,
         request: TranslationRequest
