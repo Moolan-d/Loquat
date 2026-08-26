@@ -740,7 +740,7 @@ public struct SettingsView: View {
                 .disabled(!descriptor.isEnabled)
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .llmModel:
-            TextField("Model", text: $model.llmModel)
+            TextField(model.llmModelPlaceholder, text: $model.llmModel)
                 .labelsHidden()
                 .accessibilityLabel(descriptor.accessibilityLabel)
         case .llmTest:

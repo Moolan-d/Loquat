@@ -79,7 +79,12 @@ public struct OpenAICompatibleProvider: TranslationProvider, ContextExpansionPro
             throw TranslationProviderError.unconfigured
         }
         let apiKey = configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 模型留空时按 base URL 兜底。兜底在这里而不是在设置里落盘，两次请求
+        // （首译与按需语境）也就自动共用同一个结论；兜不住的仍然落到 unconfigured。
+        let requestedModel = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = requestedModel.isEmpty
+            ? LLMDefaultModel.resolve(baseURL: configuration.baseURL) ?? ""
+            : requestedModel
         guard !apiKey.isEmpty,
               !model.isEmpty,
               !configuration.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

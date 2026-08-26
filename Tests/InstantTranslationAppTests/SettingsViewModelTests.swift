@@ -390,6 +390,37 @@ final class SettingsViewModelTests: XCTestCase {
         }
     }
 
+    /// OpenRouter 有兜底模型，Model 因此是可选项；留空要能存下来，且存的是空值——
+    /// 兜底发生在请求时，不落盘，slug 变了才能靠发版修好。
+    func testOpenRouterAcceptsBlankModelAndPersistsItEmpty() async throws {
+        let preferences = MemoryPreferencesStore()
+        let credentials = MemoryCredentialStore()
+        let model = await makeModel(preferences: preferences, credentials: credentials)
+        model.llmBaseURL = "https://openrouter.ai/api/v1"
+        model.llmAPIKey = "llm-secret"
+        model.llmModel = ""
+
+        try await model.save()
+
+        XCTAssertEqual(model.saveState, .saved)
+        let saved = await preferences.load()
+        XCTAssertEqual(saved.llmBaseURL, "https://openrouter.ai/api/v1")
+        XCTAssertEqual(saved.llmModel, "")
+    }
+
+    func testBlankModelPlaceholderAnnouncesTheFallbackOnlyWhereItApplies() async {
+        let model = await makeModel()
+
+        model.llmBaseURL = "https://openrouter.ai/api/v1"
+        XCTAssertEqual(model.llmModelPlaceholder, "openrouter/free")
+
+        model.llmBaseURL = "https://api.openai.com/v1"
+        XCTAssertEqual(model.llmModelPlaceholder, "Model")
+
+        model.llmBaseURL = ""
+        XCTAssertEqual(model.llmModelPlaceholder, "Model")
+    }
+
     func testSaveTrimsConfigurationAndCoordinatesEveryConsumer() async throws {
         let preferences = MemoryPreferencesStore()
         let credentials = MemoryCredentialStore()

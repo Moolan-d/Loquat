@@ -332,6 +332,73 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         }
     }
 
+    func testBlankModelFallsBackToTheOpenRouterFreeRouter() async throws {
+        let transport = StubHTTPTransport(statusCode: 200, body: Self.successBody)
+        let provider = OpenAICompatibleProvider(transport: transport) { _ in
+            .init(
+                baseURL: "https://openrouter.ai/api/v1",
+                apiKey: "key",
+                model: "  ",
+                systemPrompt: DefaultPrompts.general
+            )
+        }
+
+        _ = try await provider.translate(Self.request)
+
+        let requests = await transport.requests
+        let sent = try XCTUnwrap(requests.first)
+        let body = try JSONDecoder().decode(LLMRequestBody.self, from: try XCTUnwrap(sent.httpBody))
+        XCTAssertEqual(body.model, "openrouter/free")
+    }
+
+    func testExplicitModelIsNeverReplacedByTheFallback() async throws {
+        let transport = StubHTTPTransport(statusCode: 200, body: Self.successBody)
+        let provider = OpenAICompatibleProvider(transport: transport) { _ in
+            .init(
+                baseURL: "https://openrouter.ai/api/v1",
+                apiKey: "key",
+                model: "anthropic/claude-sonnet-4.5",
+                systemPrompt: DefaultPrompts.general
+            )
+        }
+
+        _ = try await provider.translate(Self.request)
+
+        let requests = await transport.requests
+        let sent = try XCTUnwrap(requests.first)
+        let body = try JSONDecoder().decode(LLMRequestBody.self, from: try XCTUnwrap(sent.httpBody))
+        XCTAssertEqual(body.model, "anthropic/claude-sonnet-4.5")
+    }
+
+    /// 按需语境和首译共用同一条兜底路径，否则「更多语境」会在留空模型时报 unconfigured。
+    func testContextExpansionUsesTheSameFallbackModel() async throws {
+        let transport = StubHTTPTransport(responses: [
+            .init(
+                statusCode: 200,
+                body: #"{"choices":[{"message":{"content":"{\"senses\":[{\"label\":\"网络\",\"meaning\":\"自恋\"}]}"}}]}"#
+            ),
+        ])
+        let provider = OpenAICompatibleProvider(transport: transport) { _ in
+            .init(
+                baseURL: "https://openrouter.ai/api/v1",
+                apiKey: "key",
+                model: "",
+                systemPrompt: DefaultPrompts.general
+            )
+        }
+
+        let expansion = try await provider.expandContext(
+            for: Self.request,
+            excluding: Self.makeResult()
+        )
+
+        XCTAssertEqual(expansion.senses.map(\.label), ["网络"])
+        let requests = await transport.requests
+        let sent = try XCTUnwrap(requests.first)
+        let body = try JSONDecoder().decode(LLMRequestBody.self, from: try XCTUnwrap(sent.httpBody))
+        XCTAssertEqual(body.model, "openrouter/free")
+    }
+
     func testRejectsRemoteHTTPBeforeSendingCredentialsAndAllowsLoopbackHTTP() async throws {
         let remoteTransport = StubHTTPTransport(statusCode: 200, body: Self.successBody)
         let remoteProvider = OpenAICompatibleProvider(transport: remoteTransport) { _ in

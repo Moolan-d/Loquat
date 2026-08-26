@@ -79,7 +79,7 @@ extension SettingsSaveError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidLLMConfiguration:
-            "Complete the LLM Base URL, API key, and model, or clear all three."
+            "Complete the LLM Base URL, API key, and model, or clear all three. On OpenRouter the model may stay empty."
         case .invalidPrompt:
             "Prompts cannot be empty."
         case .insecureEndpoint:
@@ -116,6 +116,14 @@ public final class SettingsViewModel {
     public private(set) var credentialAccessState: CredentialAccessState
     public private(set) var saveState = SettingsSaveState.idle
     public private(set) var saveError: String?
+
+    /// Model 留空时真正会发出去的模型名。没有兜底就退回普通字段提示，
+    /// 用户因此能一眼看出「这里可以不填」只在某些端点成立。
+    public var llmModelPlaceholder: String {
+        LLMDefaultModel.resolve(
+            baseURL: llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        ) ?? "Model"
+    }
 
     private let preferencesStore: any PreferencesStoring
     private let credentialStore: any CredentialStoring
@@ -342,7 +350,11 @@ public final class SettingsViewModel {
         let selectedPrompt = (
             defaultPromptPresetID == .general ? generalPrompt : technologyAndRnDPrompt
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !baseURL.isEmpty, !apiKey.isEmpty, !model.isEmpty, !selectedPrompt.isEmpty else {
+        guard !baseURL.isEmpty,
+              !apiKey.isEmpty,
+              !model.isEmpty || LLMDefaultModel.resolve(baseURL: baseURL) != nil,
+              !selectedPrompt.isEmpty
+        else {
             throw SettingsSaveError.invalidLLMConfiguration
         }
         let normalizedBaseURL: String
@@ -371,9 +383,13 @@ public final class SettingsViewModel {
             throw SettingsSaveError.invalidPrompt
         }
 
-        let llmFields = [baseURL, llmKey, model]
-        let hasAnyLLMField = llmFields.contains { !$0.isEmpty }
-        guard !hasAnyLLMField || llmFields.allSatisfy({ !$0.isEmpty }) else {
+        // 有兜底模型的端点（OpenRouter）让 Model 变成可选项，其余端点三者仍然同进同退。
+        // 判定走未归一化的 baseURL：归一化只剥尾随斜杠，不影响 host。
+        let requiredLLMFields = LLMDefaultModel.resolve(baseURL: baseURL) == nil
+            ? [baseURL, llmKey, model]
+            : [baseURL, llmKey]
+        let hasAnyLLMField = [baseURL, llmKey, model].contains { !$0.isEmpty }
+        guard !hasAnyLLMField || requiredLLMFields.allSatisfy({ !$0.isEmpty }) else {
             throw SettingsSaveError.invalidLLMConfiguration
         }
 

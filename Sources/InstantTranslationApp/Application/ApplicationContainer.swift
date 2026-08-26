@@ -84,10 +84,10 @@ public final class ApplicationContainer {
         }
         let llm = OpenAICompatibleProvider(transport: transport) { presetID in
             let preferences = await preferencesStore.load()
+            // 模型是否齐备交给 provider 判定：那里才知道 base URL 有没有兜底模型。
             guard let apiKey = try credentialStore.read(.llmAPIKey),
                   !apiKey.isEmpty,
-                  !preferences.llmBaseURL.isEmpty,
-                  !preferences.llmModel.isEmpty
+                  !preferences.llmBaseURL.isEmpty
             else {
                 return nil
             }
