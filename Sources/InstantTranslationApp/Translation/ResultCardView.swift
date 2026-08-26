@@ -166,7 +166,7 @@ public struct ResultCardView: View {
                         maximumHeight: TranslationResultLayout.googleBodyMaximumHeight
                     ) {
                         Text(result.primaryText)
-                            .font(.title3)
+                            .font(.body)
                             .textSelection(.enabled)
                     }
                     copyButton(for: result)
@@ -286,7 +286,7 @@ private struct LLMResultContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(result.primaryText)
-                .font(.title3.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .textSelection(.enabled)
             if let rationale = result.rationale, !rationale.isEmpty {
                 Text(rationale)

@@ -69,26 +69,29 @@ public struct TranslationView: View {
                 },
                 swap: { session.swapDirectionAndResubmit() }
             )
-            // 提示语收进输入框内部：它是这个控件的说明，摆在框外自成一行时，
-            // 既占掉一行高度，又像是在对整个弹窗说话。
-            HStack(alignment: .bottom, spacing: 6) {
-                TranslationInputField(
-                    text: $session.input,
-                    focusController: focusController,
-                    onSubmit: {
-                        session.submit(rawText: session.input, sourceID: .manual)
-                    },
-                    onHeightChange: { resolvedInputHeight = $0 }
-                )
-                .frame(height: resolvedInputHeight)
-                Text("Enter to translate")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    // 点在提示语上应当照样落进输入框；它也不必再报一次可访问性，
-                    // 输入框自己已经有标签了。
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-                    .padding(.bottom, 3)
+            // 提示语当 placeholder 用：摆在输入框旁边时它一直占着一条竖栏，
+            // 长文本被挤成窄窄一条；而它本来就只在框还空着的时候有话要说。
+            TranslationInputField(
+                text: $session.input,
+                focusController: focusController,
+                onSubmit: {
+                    session.submit(rawText: session.input, sourceID: .manual)
+                },
+                onHeightChange: { resolvedInputHeight = $0 }
+            )
+            .frame(height: resolvedInputHeight)
+            .overlay(alignment: .topLeading) {
+                if session.input.isEmpty {
+                    // 字体和内边距都跟输入框对齐，让它正好落在第一个字将要出现的位置。
+                    Text("Enter to translate")
+                        .font(Font(TranslationInputField.font))
+                        .foregroundStyle(.tertiary)
+                        .padding(TranslationInputField.textInset)
+                        // 点在提示语上应当照样落进输入框；它也不必再报一次可访问性，
+                        // 输入框自己已经有标签了。
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, 4)
             .background(
