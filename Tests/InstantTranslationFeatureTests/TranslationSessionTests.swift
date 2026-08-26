@@ -265,6 +265,143 @@ final class TranslationSessionTests: XCTestCase {
         session.cancelAll()
     }
 
+    func testMoreContextsBecomesAvailableOnlyAfterALookupSucceedsOnTheLLM() throws {
+        let session = makeSession()
+        session.submit(rawText: "ego", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        XCTAssertEqual(session.contextExpansionState, .unavailable)
+
+        // Google 先回来不算数——补充语境是 LLM 的能力。
+        session.receive(.success(Self.result(providerID: .google, requestID: requestID, text: "自我")))
+        XCTAssertEqual(session.contextExpansionState, .unavailable)
+
+        session.receive(.success(Self.result(providerID: .llm, requestID: requestID, text: "自我")))
+        XCTAssertEqual(session.contextExpansionState, .available)
+        session.cancelAll()
+    }
+
+    func testSentenceTranslationNeverOffersMoreContexts() throws {
+        let session = makeSession()
+        session.submit(rawText: "the compiler translates source code", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+
+        session.receive(.success(Self.result(providerID: .llm, requestID: requestID, text: "编译器…")))
+
+        // 整句翻译没有「更多语境」可言，入口根本不该出现。
+        XCTAssertEqual(session.contextExpansionState, .unavailable)
+        session.cancelAll()
+    }
+
+    func testOneClickSendsOneExpansionAndRepeatClicksSendNone() async throws {
+        let probe = ExpansionProbe()
+        let session = makeSession(provider: ExpandableStubProvider(probe: probe))
+        let requestID = try await lookupSucceeded(session)
+
+        session.requestMoreContexts()
+        XCTAssertEqual(session.contextExpansionState, .loading)
+        // 加载中再点不该叠加请求。
+        session.requestMoreContexts()
+
+        let arrived = await eventually {
+            if case .success = session.contextExpansionState { return true }
+            return false
+        }
+        XCTAssertTrue(arrived)
+        guard case .success(let expansion) = session.contextExpansionState else {
+            return XCTFail("Expected the expansion to succeed")
+        }
+        XCTAssertEqual(expansion.requestID, requestID)
+        XCTAssertEqual(expansion.senses.map(\.label), ["网络"])
+
+        // 成功之后的重复点击命中内存里的结果，同样不发请求。
+        session.requestMoreContexts()
+        let calls = await probe.expandCallCount
+        XCTAssertEqual(calls, 1)
+        session.cancelAll()
+    }
+
+    func testExpansionFailureKeepsTheTranslationAndAllowsExactlyOneRetry() async throws {
+        let probe = ExpansionProbe()
+        let session = makeSession(
+            provider: ExpandableStubProvider(probe: probe, error: .rateLimited)
+        )
+        _ = try await lookupSucceeded(session)
+
+        session.requestMoreContexts()
+        let failed = await eventually {
+            session.contextExpansionState == .failure
+        }
+
+        XCTAssertTrue(failed)
+        // 补充语境失败不该影响已经拿到的译文。
+        XCTAssertEqual(session.states[.llm]?.primaryText, "自我")
+
+        session.requestMoreContexts()
+        _ = await eventually { await probe.expandCallCount == 2 }
+        let calls = await probe.expandCallCount
+        XCTAssertEqual(calls, 2)
+        session.cancelAll()
+    }
+
+    func testEveryFreshStartClearsTheOldSupplementalContext() async throws {
+        for restart in Self.restartsThatInvalidateContext {
+            let session = makeSession(provider: ExpandableStubProvider(probe: ExpansionProbe()))
+            _ = try await lookupSucceeded(session)
+            session.requestMoreContexts()
+            _ = await eventually {
+                if case .success = session.contextExpansionState { return true }
+                return false
+            }
+
+            restart.apply(session)
+
+            XCTAssertEqual(
+                session.contextExpansionState,
+                .unavailable,
+                "\(restart.name) must clear the previous expansion"
+            )
+            session.cancelAll()
+        }
+    }
+
+    func testLateExpansionFromAnAbandonedRequestIsDropped() async throws {
+        let gate = ExpansionGate()
+        let session = makeSession(
+            provider: ExpandableStubProvider(probe: ExpansionProbe(), gate: gate)
+        )
+        _ = try await lookupSucceeded(session)
+        let expansion = session.requestMoreContexts()
+        _ = await eventually { await gate.isWaiting }
+
+        // 请求还挂着的时候换了新输入；随后放行的那份属于上一轮，不能贴上来。
+        session.submit(rawText: "beef", sourceID: .manual)
+        await gate.release()
+        await expansion?.wait()
+
+        // 新一轮有自己的入口状态，唯一不能发生的是上一轮的义项贴了上来。
+        if case .success(let stale) = session.contextExpansionState {
+            XCTFail("A late expansion from \(stale.requestID) leaked into the new lookup")
+        }
+        session.cancelAll()
+    }
+
+    private static let restartsThatInvalidateContext: [ContextInvalidatingRestart] = [
+        .init(name: "new submit") { $0.submit(rawText: "beef", sourceID: .manual) },
+        .init(name: "swap") { $0.swapDirectionAndResubmit() },
+        .init(name: "reset") { $0.reset() },
+        .init(name: "disabling the LLM") { $0.enabledProviderIDs = [.google] },
+        .init(name: "retrying the LLM") { $0.retry(providerID: .llm) },
+    ]
+
+    /// 走到「LLM 查词已成功」这一步：多数补充语境的测试都从这里开始。
+    private func lookupSucceeded(_ session: TranslationSession) async throws -> UUID {
+        session.submit(rawText: "ego", sourceID: .manual)
+        let requestID = try XCTUnwrap(session.activeRequest?.id)
+        let ready = await eventually { session.contextExpansionState == .available }
+        XCTAssertTrue(ready, "The lookup did not reach the state that offers more contexts")
+        return requestID
+    }
+
     private func makeSession(
         promptPresetID: PromptPresetID = .technologyAndRnD
     ) -> TranslationSession {
@@ -484,5 +621,85 @@ private actor GenerationControlledProvider: TranslationProvider {
     private struct PendingCall {
         let request: TranslationRequest
         let continuation: CheckedContinuation<TranslationResult, Never>
+    }
+}
+
+
+private struct ContextInvalidatingRestart {
+    let name: String
+    let apply: @MainActor (TranslationSession) -> Void
+
+    init(name: String, apply: @escaping @MainActor (TranslationSession) -> Void) {
+        self.name = name
+        self.apply = apply
+    }
+}
+
+actor ExpansionProbe {
+    private(set) var expandCallCount = 0
+
+    func record() { expandCallCount += 1 }
+}
+
+/// 让补充语境请求停在半路，好测「结果迟到时会不会贴到新一轮上」。
+actor ExpansionGate {
+    private(set) var isWaiting = false
+    private var resume: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        isWaiting = true
+        await withCheckedContinuation { resume = $0 }
+    }
+
+    func release() {
+        resume?.resume()
+        resume = nil
+        isWaiting = false
+    }
+}
+
+private struct ExpandableStubProvider: TranslationProvider, ContextExpansionProvider {
+    let id = ProviderID.llm
+    let probe: ExpansionProbe
+    var error: TranslationProviderError?
+    var gate: ExpansionGate?
+
+    init(
+        probe: ExpansionProbe,
+        error: TranslationProviderError? = nil,
+        gate: ExpansionGate? = nil
+    ) {
+        self.probe = probe
+        self.error = error
+        self.gate = gate
+    }
+
+    func translate(_ request: TranslationRequest) async throws -> TranslationResult {
+        TranslationResult(
+            providerID: id,
+            requestID: request.id,
+            primaryText: "自我",
+            rationale: nil,
+            senses: [.init(label: "心理学", meaning: "自我意识", example: nil)],
+            phrases: [],
+            sourceLanguage: request.sourceLanguage,
+            targetLanguage: request.targetLanguage,
+            pronunciations: [],
+            speakableText: "自我",
+            duration: .zero
+        )
+    }
+
+    func expandContext(
+        for request: TranslationRequest,
+        excluding existingResult: TranslationResult
+    ) async throws -> ContextExpansionResult {
+        await probe.record()
+        await gate?.wait()
+        if let error { throw error }
+        return ContextExpansionResult(
+            requestID: request.id,
+            senses: [.init(label: "网络", meaning: "自恋", example: nil)]
+        )
     }
 }
