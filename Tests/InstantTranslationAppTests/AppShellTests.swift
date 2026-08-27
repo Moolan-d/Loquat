@@ -1,10 +1,37 @@
 import AppKit
 import XCTest
+import InstantTranslationCore
 import InstantTranslationInfrastructure
 @testable import InstantTranslationApp
 
 @MainActor
 final class AppShellTests: XCTestCase {
+    func testContainerConstructionUsesPresenceHintsWithoutReadingCredentials() async {
+        var preferences = AppPreferences()
+        preferences.googleCredentialConfigured = true
+        preferences.llmCredentialConfigured = true
+        preferences.llmBaseURL = "https://api.openai.com/v1"
+        preferences.llmModel = "gpt-5-mini"
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "google-secret",
+            .llmAPIKey: "llm-secret",
+        ])
+
+        let container = await ApplicationContainer.make(
+            preferencesStore: MemoryPreferencesStore(preferences),
+            credentialStore: credentials,
+            transport: RecordingHTTPTransport(responses: []),
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            clipboardSource: NoInputSource(),
+            installApplicationMenu: false
+        )
+        defer { container.stop() }
+
+        XCTAssertEqual(credentials.readCallCount, 0)
+        XCTAssertEqual(container.providerAvailability.configuredProviderIDs, [.google, .llm])
+    }
+
     func testPopoverIsTransientAndUsesNativeMaterial() {
         let controller = TranslationPopoverController(
             contentView: NSView(),
@@ -258,6 +285,12 @@ private final class WeakBox<Value: AnyObject> {
     init(_ value: Value) {
         self.value = value
     }
+}
+
+private struct NoInputSource: InputSource {
+    let id = InputSourceID.clipboard
+
+    func read() async throws -> SourceText? { nil }
 }
 
 private final class FakeShortcutRegistrar: GlobalShortcutRegistering {

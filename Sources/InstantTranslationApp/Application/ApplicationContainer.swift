@@ -11,6 +11,7 @@ public final class ApplicationContainer {
     public let preferencesStore: any PreferencesStoring
     public let credentialStore: any CredentialStoring
     public let providerAppearance: ProviderAppearance
+    public let providerAvailability: ProviderAvailability
     public let statusBarController: StatusBarController
     public let popoverController: TranslationPopoverController
     public let settingsViewModel: SettingsViewModel
@@ -28,6 +29,7 @@ public final class ApplicationContainer {
         preferencesStore: any PreferencesStoring,
         credentialStore: any CredentialStoring,
         providerAppearance: ProviderAppearance,
+        providerAvailability: ProviderAvailability,
         statusBarController: StatusBarController,
         popoverController: TranslationPopoverController,
         settingsViewModel: SettingsViewModel,
@@ -39,6 +41,7 @@ public final class ApplicationContainer {
         self.preferencesStore = preferencesStore
         self.credentialStore = credentialStore
         self.providerAppearance = providerAppearance
+        self.providerAvailability = providerAvailability
         self.statusBarController = statusBarController
         self.popoverController = popoverController
         self.settingsViewModel = settingsViewModel
@@ -47,7 +50,7 @@ public final class ApplicationContainer {
         self.clipboardSource = clipboardSource
     }
 
-    public static func make() async throws -> ApplicationContainer {
+    public static func make() async -> ApplicationContainer {
         let preferencesStore = UserDefaultsPreferencesStore()
         let credentialStore = KeychainCredentialStore()
         return await make(
@@ -101,11 +104,11 @@ public final class ApplicationContainer {
         let appearance = ProviderAppearance(
             llmBrand: ProviderBrandResolver.resolve(baseURL: preferences.llmBaseURL)
         )
-        // 凭据只在这里读一次并发布快照；窗口渲染路径不再触碰 Keychain。
+        // 启动只消费非敏感 presence hints；真实凭据仅在设置展示或请求发送时读取。
         let availability = ProviderAvailability(
             configuredProviderIDs: ProviderAvailability.configuredProviderIDs(
-                googleAPIKey: .of(Result { try credentialStore.read(.googleAPIKey) }),
-                llmAPIKey: .of(Result { try credentialStore.read(.llmAPIKey) }),
+                googleAPIKey: preferences.googleCredentialConfigured ? .present : .absent,
+                llmAPIKey: preferences.llmCredentialConfigured ? .present : .absent,
                 llmBaseURL: preferences.llmBaseURL,
                 llmModel: preferences.llmModel
             )
@@ -137,6 +140,7 @@ public final class ApplicationContainer {
             },
             connectionTester: ProviderConnectionTester(transport: transport),
             providerAppearance: appearance,
+            providerAvailability: availability,
             session: session
         )
         let settingsWindowController = SettingsWindowController(
@@ -148,6 +152,7 @@ public final class ApplicationContainer {
             preferencesStore: preferencesStore,
             credentialStore: credentialStore,
             providerAppearance: appearance,
+            providerAvailability: availability,
             statusBarController: statusBar,
             popoverController: popover,
             settingsViewModel: settingsViewModel,
