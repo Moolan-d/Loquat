@@ -50,16 +50,15 @@ The global shortcut is registered from the ordinary preferences snapshot, not fr
 Runtime code never inspects signing mode or access-group strings. Direct release packaging has one supported mode:
 
 1. build the app;
-2. embed a matching Developer ID provisioning profile;
-3. sign with a Developer ID Application identity, Hardened Runtime, and secure timestamp;
-4. verify the signature, Team ID, and application identifier;
-5. archive for notarization;
-6. submit with `xcrun notarytool submit --wait`;
-7. staple and validate the ticket;
-8. create the final ZIP and checksum; and
-9. assess the app with Gatekeeper.
+2. sign with a Developer ID Application identity, Hardened Runtime, and secure timestamp;
+3. verify the signature authority, Team ID, application identifier, and absence of Keychain Sharing;
+4. archive for notarization;
+5. submit with `xcrun notarytool submit --wait` using a stored Keychain profile;
+6. staple and validate the ticket;
+7. assess the app with Gatekeeper; and
+8. create the final ZIP and checksum.
 
-The entitlement template retains `com.apple.application-identifier` and `com.apple.developer.team-identifier` but removes `keychain-access-groups`. Profile verification still requires the exact application identifier. Ad-hoc packaging is not a supported credential-capable distribution path.
+The entitlement template retains `com.apple.application-identifier` and `com.apple.developer.team-identifier` but removes `keychain-access-groups`. This app has no restricted capability, so its Developer ID distribution does not embed a provisioning profile. If a future restricted capability requires one, it must be designed as a separate distribution change. Ad-hoc packaging is not a supported credential-capable distribution path.
 
 ## Verification
 

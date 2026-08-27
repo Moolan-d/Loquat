@@ -293,13 +293,9 @@ The Prompts section contains editable General and Technology & R&D system prompt
 
 Google and LLM API keys are stored only in macOS Keychain with the `WhenUnlockedThisDeviceOnly` accessibility class. Base URL, model name, prompts, preset selection, shortcut, and Boolean settings are stored in `UserDefaults`.
 
-The Keychain implementation is selected explicitly by the build's signing mode:
+The implementation is a fixed Data Protection Keychain adapter. Every query sets `kSecUseDataProtectionKeychain = true`, omits `kSecAttrAccessGroup`, and uses service `com.instanttranslation.macos.credentials.v2`. The default application-identifier group therefore remains app-only; Keychain Sharing is not enabled. There is no file-based fallback, signing-mode selection, or runtime migration.
 
-- `adhoc`, used for the author's current self-use and GitHub Release builds, uses the macOS file-based Keychain and does not set `kSecUseDataProtectionKeychain`;
-- `signed`, reserved for a future Developer ID/provisioned build, uses the Data Protection Keychain with the verified application identifier and keychain access group; and
-- the application never catches a Data Protection Keychain entitlement failure and silently retries against the file-based Keychain.
-
-Both modes use the same application-owned service and credential account identifiers. A future transition from `adhoc` to `signed` performs an explicit, versioned migration: read the legacy item, write and read-verify the destination item, and only then delete the legacy item. A migration failure leaves the original credential intact and presents a sanitized, retryable error rather than replacing it with an empty value or plaintext preference.
+Older file-based items are intentionally not read, modified, or deleted. Existing users re-enter keys once in Settings; after verifying the new entries work, they may delete the old items manually in Keychain Access. Non-sensitive Boolean presence hints live in `UserDefaults` only to render configuration status; requests always read the real matching Keychain item.
 
 The application never persists:
 
@@ -314,11 +310,9 @@ Application exit clears the current in-memory session.
 
 ### 9.5 Signing and GitHub Release distribution
 
-The release tooling accepts exactly `SIGNING_MODE=adhoc` or `SIGNING_MODE=signed` and never infers a mode from whichever identity happens to exist on the build machine.
+Release tooling has one direct-distribution path: it requires `DEVELOPMENT_TEAM`, a Developer ID Application `CODE_SIGN_IDENTITY`, and a `NOTARYTOOL_PROFILE` for release packaging. It signs with Hardened Runtime and a secure timestamp, verifies the actual signature authority, Team ID, and app identifiers, creates a pre-notary ZIP, waits for notarization, staples and validates the ticket, assesses the app with Gatekeeper, then emits the final ZIP and `SHA256SUMS`.
 
-The current public distribution mode is `adhoc`. It produces an application ZIP and `SHA256SUMS` for GitHub Releases. The project does not claim that this artifact is notarized or accepted automatically by Gatekeeper. User instructions follow Apple's per-application flow: attempt to open the application, then use System Settings → Privacy & Security → Open Anyway when macOS blocks it. The project does not instruct users to disable Gatekeeper globally or require `sudo xattr` as the default installation path.
-
-The future `signed` mode requires an explicitly supplied Developer ID identity, team identifier, and matching provisioning profile. It validates the actual signature, application identifier, team identifier, and exact keychain access group before producing an artifact. Notarization is a separate release gate and must not be implied by code signing alone.
+This app has no restricted capabilities, so Developer ID distribution does not need an embedded provisioning profile. The signed entitlement set contains only the application identifier and team identifier, and explicitly rejects Keychain Sharing groups. Published releases are expected to open normally through Gatekeeper; documentation does not instruct users to disable Gatekeeper or use `xattr`.
 
 ## 10. Security, privacy, and permissions
 
@@ -362,7 +356,7 @@ Network integration tests use local stub transports and consume no real API quot
 
 UI tests cover menu-bar opening, immediate focus, outside-click dismissal, direction override, independent copy actions and success feedback, clipboard-on-shortcut behavior, and settings persistence.
 
-Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the exact query shape for file-based and Data Protection Keychain modes, verify there is no runtime fallback, and cover read-verified migration without requiring a provisioned XCTest host. Signed-mode live Keychain access remains a verification gate for a genuinely provisioned application bundle.
+Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the fixed Data Protection query shape, v2 service, absent explicit access group, and no fallback or migration. Script tests verify the Developer ID/notarization sequence with fake external tools; a real release additionally validates the signed artifact and notarization result on the release machine.
 
 ### 12.2 Manual and performance acceptance
 

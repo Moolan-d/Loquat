@@ -1,5 +1,7 @@
 # Instant Translation 发布内存与诊断门禁修订设计
 
+> **历史设计说明：其中 ad-hoc 分发描述已被取代。** 当前发布与钥匙串架构以 `docs/superpowers/specs/2026-08-27-streamlined-keychain-design.md` 为准。
+
 日期：2026-08-13  
 状态：待用户复核  
 适用范围：首版发布验收收尾，不增加用户可见翻译功能

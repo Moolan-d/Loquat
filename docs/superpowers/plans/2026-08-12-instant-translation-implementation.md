@@ -1,5 +1,7 @@
 # Instant Translation for macOS Implementation Plan
 
+> **Historical plan — signing and Keychain details below are superseded.** Follow `docs/superpowers/specs/2026-08-27-streamlined-keychain-design.md` and `docs/superpowers/plans/2026-08-27-streamlined-keychain.md` for the current fixed Data Protection Keychain and notarized Developer ID release flow.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a menu-bar-only macOS 15+ application that independently compares Google Cloud Translation with an OpenAI-compatible terminology translation while remaining native, private, and below the 50 MB idle-memory target.

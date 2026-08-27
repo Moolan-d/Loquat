@@ -16,7 +16,7 @@
 - Secret values remain exclusively in Keychain and request headers.
 - Existing file-based Keychain items are never queried, migrated, or deleted.
 - Runtime code has no signing-mode or access-group configuration.
-- Direct releases require Developer ID, Hardened Runtime, secure timestamp, provisioning, notarization, stapling, and Gatekeeper assessment.
+- Direct releases require Developer ID, Hardened Runtime, secure timestamp, notarization, stapling, and Gatekeeper assessment; no provisioning profile is needed without a restricted capability.
 
 ---
 
@@ -216,14 +216,14 @@ git commit -m "refactor(app): remove keychain work from startup"
 - Delete: `scripts/verify-profile-keychain-group.sh`
 
 **Interfaces:**
-- `package-app.sh` requires `DEVELOPMENT_TEAM`, `CODE_SIGN_IDENTITY`, and `PROVISIONING_PROFILE` and outputs the signed app path.
+- `package-app.sh` requires `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY` and outputs the signed app path.
 - `package-release.sh` consumes the signed app plus notary credentials through `xcrun notarytool` and outputs the final notarized ZIP.
 
 - [ ] **Step 1: Rewrite script tests for one signed/notarized path**
 
 Use fake `codesign`, `xcrun`, and package-app executables to assert observable behavior: package creation is invoked without `SIGNING_MODE`, notary submission receives the pre-notary archive, stapling/validation occur before the final ZIP, and any failed command stops publication.
 
-Update entitlement fixtures to contain only application identifier and team identifier. Verify the profile application identifier rather than an explicit Keychain group.
+Update entitlement fixtures to contain only application identifier and team identifier. Reject any explicit Keychain group.
 
 - [ ] **Step 2: Run script tests and verify RED**
 
@@ -242,7 +242,7 @@ Delete `keychain-access-groups` from the entitlement template and materializer. 
 
 - [ ] **Step 4: Make app packaging always Developer ID signed**
 
-Remove the `SIGNING_MODE` switch. Keep exact Team/application-identifier/profile checks. Sign with:
+Remove the `SIGNING_MODE` switch and provisioning-profile handling. Keep exact Team/application-identifier checks. Sign with:
 
 ```bash
 codesign --force --deep --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$CODE_SIGN_IDENTITY" "$APP"
@@ -274,11 +274,11 @@ git commit -m "build(release): require notarized Developer ID artifacts"
 
 **Interfaces:** None; documents must match the implemented commands and credential semantics.
 
-- [ ] **Step 1: Update user and developer documentation**
+- [x] **Step 1: Update user and developer documentation**
 
 Document the v2 service, one-time credential re-entry, absence of startup Keychain reads, Developer ID/notarized distribution, and new release environment inputs. Remove ad-hoc installation and automatic migration claims.
 
-- [ ] **Step 2: Run placeholder and stale-term scans**
+- [x] **Step 2: Run placeholder and stale-term scans**
 
 Run:
 
@@ -288,7 +288,7 @@ rg -n 'TBD|TODO|SIGNING_MODE|fileBased|CredentialMigrator|InstantTranslationSign
 
 Expected: no stale runtime/signing terms; any historical design hits are explicitly marked superseded.
 
-- [ ] **Step 3: Run complete verification**
+- [x] **Step 3: Run complete verification**
 
 Run:
 

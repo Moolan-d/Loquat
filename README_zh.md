@@ -49,7 +49,7 @@
 
 1. 从 [GitHub Releases](https://github.com/Moolan-d/Loquat/releases) 下载 `Loquat-macOS.zip`。
 2. 解压后把 `Loquat.app` 拖入 `/Applications`。
-3. 首次启动若被 Gatekeeper 拦截（adhoc 签名），右键 → **打开**，或前往 **系统设置 → 隐私与安全性 → 仍要打开**。
+3. 直接正常打开 Loquat。正式发布包使用 Developer ID 签名并已完成公证。
 
 ## 使用
 
@@ -80,22 +80,17 @@
 
 ### 「Loquat.app」已损坏、无法打开
 
-应用是 adhoc 签名、未公证，所以 Gatekeeper 可能拦截。这不代表文件损坏。右键 → **打开**，或执行：
-
-```bash
-xattr -cr /Applications/Loquat.app
-```
+正式发布包已经公证，不应需要「仍要打开」或 `xattr`。请删除当前副本，从 Release 页面重新下载 ZIP 并校验 `SHA256SUMS`。若仍出现提示，请反馈 Release 版本和 macOS 版本，而不要绕过 Gatekeeper。
 
 ### 我的 API 密钥存在哪里？
 
-存于 macOS 钥匙串，服务名 `com.instanttranslation.macos.credentials`。绝不写入 `UserDefaults`、日志或请求 URL。
+存于 macOS Data Protection 钥匙串，服务名 `com.instanttranslation.macos.credentials.v2`。Loquat 使用应用默认、仅自身可访问的 group，不启用 Keychain Sharing；绝不写入 `UserDefaults`、日志或请求 URL。
+
+若你使用过旧版本，请打开设置并重新输入一次各个密钥。Loquat 不会读取或迁移旧的 file-based 钥匙串项，因此不会触发它们的旧授权弹窗。确认新密钥可用后，可在「钥匙串访问」中手动删除旧项。
 
 ### 首次启动的授权提示
 
-首次启动时，macOS 可能会弹出两个授权提示：
-
-- **钥匙串** — Loquat 把 API 密钥存在钥匙串里。选择「允许」或「始终允许」，应用才能保存和读取密钥。
-- **读取文稿** — macOS 可能请求访问文件的权限。允许即可，应用才能正常工作。
+Loquat 启动时不读取钥匙串。打开设置或提交翻译时，macOS 可能请求钥匙串授权；选择「允许」或「始终允许」，应用即可保存和读取 API 密钥。此流程不需要「文稿」访问权限。
 
 ## 开发
 
@@ -106,9 +101,17 @@ cd Loquat
 swift test                                          # 运行测试套件
 swift run InstantTranslation                        # 从源码运行
 
-SIGNING_MODE=adhoc bash scripts/package-app.sh      # 构建可运行的 build/Loquat.app
-SIGNING_MODE=adhoc bash scripts/package-release.sh  # 构建 build/release/Loquat-macOS.zip
+DEVELOPMENT_TEAM=TEAMID \
+CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  bash scripts/package-app.sh                        # 构建已签名的 build/Loquat.app
+
+NOTARYTOOL_PROFILE=loquat-notary \
+DEVELOPMENT_TEAM=TEAMID \
+CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  bash scripts/package-release.sh                    # 公证、装订票据并生成 build/release/Loquat-macOS.zip
 ```
+
+使用一次 `xcrun notarytool store-credentials` 创建 `loquat-notary`；脚本只传递其钥匙串 profile 名称，不会输出公证凭据。当前应用没有受限 capability，因此 Developer ID 打包不需要嵌入 provisioning profile。
 
 ## 许可证
 

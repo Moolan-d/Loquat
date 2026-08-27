@@ -49,7 +49,7 @@
 
 1. Download `Loquat-macOS.zip` from [GitHub Releases](https://github.com/Moolan-d/Loquat/releases).
 2. Unzip it and drag `Loquat.app` into `/Applications`.
-3. On first launch, if Gatekeeper blocks the ad-hoc signed app, right-click → **Open**, or go to **System Settings → Privacy & Security → Open Anyway**.
+3. Open Loquat normally. Published releases are Developer ID signed and notarized.
 
 ## Usage
 
@@ -80,22 +80,17 @@
 
 ### “Loquat.app” is damaged and can’t be opened
 
-The app is ad-hoc signed and not notarized, so Gatekeeper may block it. It doesn’t mean the file is corrupted. Either right-click → **Open**, or run:
-
-```bash
-xattr -cr /Applications/Loquat.app
-```
+Published releases are notarized and should not require **Open Anyway** or `xattr`. Delete the copy, download the ZIP again from the release page, and verify `SHA256SUMS`. If the warning persists, report the release version and macOS version instead of bypassing Gatekeeper.
 
 ### Where are my API keys stored?
 
-In the macOS Keychain, under `com.instanttranslation.macos.credentials`. They are never written to `UserDefaults`, logs, or request URLs.
+In the macOS Data Protection Keychain, under `com.instanttranslation.macos.credentials.v2`. Loquat uses its default app-only group and does not enable Keychain Sharing. Keys are never written to `UserDefaults`, logs, or request URLs.
+
+If you used an older release, open Settings and enter each key once. Loquat intentionally does not read or migrate the old file-based Keychain items, so it avoids their legacy authorization prompts. You can remove those old items manually in Keychain Access after confirming the new keys work.
 
 ### First-launch authorization prompts
 
-On first launch, macOS may show two permission dialogs:
-
-- **Keychain** — Loquat stores your API keys there. Choose **Allow** or **Always Allow** so the app can save and read them.
-- **Documents access** — macOS may ask Loquat to access your files. Allow it so the app can work normally.
+Loquat does not read Keychain at startup. macOS may ask to authorize Keychain access when you open Settings or submit a translation; choose **Allow** or **Always Allow** to store and read your API keys. Loquat does not need Documents access for this workflow.
 
 ## Development
 
@@ -106,9 +101,17 @@ cd Loquat
 swift test                                        # run the test suite
 swift run InstantTranslation                      # run from source
 
-SIGNING_MODE=adhoc bash scripts/package-app.sh    # build a runnable build/Loquat.app
-SIGNING_MODE=adhoc bash scripts/package-release.sh # build/release/Loquat-macOS.zip
+DEVELOPMENT_TEAM=TEAMID \
+CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  bash scripts/package-app.sh                       # build a signed build/Loquat.app
+
+NOTARYTOOL_PROFILE=loquat-notary \
+DEVELOPMENT_TEAM=TEAMID \
+CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  bash scripts/package-release.sh                   # notarize, staple, and create build/release/Loquat-macOS.zip
 ```
+
+Create `loquat-notary` once with `xcrun notarytool store-credentials`; the release script passes only its Keychain profile name and never prints notarization credentials. This app uses no restricted capabilities, so Developer ID packaging does not require an embedded provisioning profile.
 
 ## License
 

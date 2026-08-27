@@ -1,5 +1,7 @@
 # Release Memory and Diagnostics Gates Implementation Plan
 
+> **Historical plan — its ad-hoc release instructions are superseded.** Retain only its memory/diagnostics context; follow `docs/superpowers/specs/2026-08-27-streamlined-keychain-design.md` for the current notarized Developer ID release flow.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the 50 MB release gate measure Apple physical footprint, remove eager hidden Settings memory, make release scans fail closed, and provide a deterministic developer-only UI diagnostics executable.
