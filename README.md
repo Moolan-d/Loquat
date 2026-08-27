@@ -41,7 +41,7 @@
 
 ## Why Loquat
 
-- **Small and native** — pure Swift, no Electron, no WebView: **~2.2 MB** to download, **~4 MB** installed, **≤ 50 MB** idle physical memory and ~0% idle CPU (verified by the release gate).
+- **Small and native** — pure Swift, no Electron, no WebView: **~2.2 MB** to download and **~4 MB** installed, with no background polling or telemetry.
 - **Spends nothing behind your back** — clipboard translation is bound to the shortcut, so unrelated copies never trigger a paid request.
 - **One failure isn't total failure** — one provider's error never invalidates what the other already returned.
 
@@ -95,6 +95,8 @@ Older releases used the v1/v2 Keychain services. Loquat never reads, migrates, u
 ### Keychain authorization prompts
 
 Loquat does not read Keychain at startup; prompts, if any, happen only after you open Settings or submit a translation — choose **Allow** or **Always Allow** to store and read your API keys. The legacy macOS Keychain ACL may also ask for access again after you replace the app with a newer ad-hoc build; that is expected and separate from Gatekeeper. Loquat does not need Documents access for this workflow.
+
+Google and LLM credentials are separate Keychain items, so macOS may ask once for each item when authorization is required. Two dialogs do not mean duplicate keys were created or that Loquat can access the entire Keychain.
 
 ## Development
 
