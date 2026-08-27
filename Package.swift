@@ -30,7 +30,7 @@ let package = Package(
         ),
         .target(
             name: "InstantTranslationFeature",
-            dependencies: ["InstantTranslationCore", "InstantTranslationInfrastructure"]
+            dependencies: ["InstantTranslationCore"]
         ),
         .testTarget(
             name: "InstantTranslationFeatureTests",
