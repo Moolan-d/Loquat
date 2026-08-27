@@ -19,5 +19,4 @@ mkdir -p "$(dirname "$OUTPUT")"
 cp "$ROOT/Config/InstantTranslation.entitlements.template.plist" "$OUTPUT"
 /usr/libexec/PlistBuddy -c "Set :com.apple.application-identifier $IDENTIFIER" "$OUTPUT"
 /usr/libexec/PlistBuddy -c "Set :com.apple.developer.team-identifier $TEAM" "$OUTPUT"
-/usr/libexec/PlistBuddy -c "Set :keychain-access-groups:0 $IDENTIFIER" "$OUTPUT"
 plutil -lint "$OUTPUT" >/dev/null

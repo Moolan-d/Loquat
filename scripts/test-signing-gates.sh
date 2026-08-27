@@ -23,26 +23,25 @@ assert_fails_with() {
     fi
 }
 
-make_entitlements() {
-    local team="$1"
-    local destination="$2"
-    cat >"$destination" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict>
-  <key>com.apple.application-identifier</key>
-  <string>$team.com.instanttranslation.macos</string>
-  <key>com.apple.developer.team-identifier</key>
-  <string>$team</string>
-  <key>keychain-access-groups</key>
-  <array><string>$team.com.instanttranslation.macos</string></array>
-</dict></plist>
-PLIST
-}
+assert_fails_with \
+    "DEVELOPMENT_TEAM" \
+    env -u DEVELOPMENT_TEAM -u CODE_SIGN_IDENTITY "$ROOT/scripts/package-app.sh"
+assert_fails_with \
+    "CODE_SIGN_IDENTITY" \
+    env -u CODE_SIGN_IDENTITY DEVELOPMENT_TEAM=EXPECTED123 "$ROOT/scripts/package-app.sh"
 
-APP="$TEMP_ROOT/InstantTranslation.app"
+GENERATED_ENTITLEMENTS="$TEMP_ROOT/generated-entitlements.plist"
+"$ROOT/scripts/materialize-entitlements.sh" EXPECTED123 "$GENERATED_ENTITLEMENTS"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$GENERATED_ENTITLEMENTS")" \
+    == "EXPECTED123.com.instanttranslation.macos" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$GENERATED_ENTITLEMENTS")" \
+    == "EXPECTED123" ]]
+assert_fails_with \
+    "Does Not Exist" \
+    /usr/libexec/PlistBuddy -c 'Print :keychain-access-groups' "$GENERATED_ENTITLEMENTS"
+
+APP="$TEMP_ROOT/Loquat.app"
 mkdir -p "$APP"
-ENTITLEMENTS="$TEMP_ROOT/entitlements.plist"
-make_entitlements EXPECTED123 "$ENTITLEMENTS"
 
 FAKE_BIN="$TEMP_ROOT/bin"
 mkdir -p "$FAKE_BIN"
@@ -56,6 +55,7 @@ if [[ "$*" == *"--entitlements"* ]]; then
     exit 0
 fi
 if [[ "$*" == *"-dvv"* ]]; then
+    echo "Authority=${FAKE_AUTHORITY:-Developer ID Application: Example}" >&2
     echo "TeamIdentifier=${FAKE_TEAM:-WRONGTEAM}" >&2
     exit 0
 fi
@@ -65,37 +65,33 @@ chmod +x "$FAKE_BIN/codesign"
 
 assert_fails_with \
     "actual signature TeamIdentifier is 'WRONGTEAM'; expected 'EXPECTED123'" \
-    env PATH="$FAKE_BIN:$PATH" FAKE_ENTITLEMENTS="$ENTITLEMENTS" \
+    env PATH="$FAKE_BIN:$PATH" FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
     "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
 
 env PATH="$FAKE_BIN:$PATH" \
-    FAKE_ENTITLEMENTS="$ENTITLEMENTS" \
+    FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
     FAKE_TEAM=EXPECTED123 \
     "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123 >/dev/null
 
-PROFILE="$TEMP_ROOT/profile.plist"
-cat >"$PROFILE" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict>
-  <key>Entitlements</key>
-  <dict>
-    <key>keychain-access-groups</key>
-    <array>
-      <string>EXPECTED123.com.instanttranslation.macos.other</string>
-    </array>
-  </dict>
-</dict></plist>
-PLIST
-
 assert_fails_with \
-    "profile does not grant exact keychain access group 'EXPECTED123.com.instanttranslation.macos'" \
-    "$ROOT/scripts/verify-profile-keychain-group.sh" \
-    "$PROFILE" EXPECTED123.com.instanttranslation.macos
+    "expected Developer ID Application" \
+    env PATH="$FAKE_BIN:$PATH" \
+        FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
+        FAKE_TEAM=EXPECTED123 \
+        FAKE_AUTHORITY="Apple Development: Example" \
+        "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
 
+ENTITLEMENTS_WITH_SHARING="$TEMP_ROOT/entitlements-with-sharing.plist"
+cp "$GENERATED_ENTITLEMENTS" "$ENTITLEMENTS_WITH_SHARING"
 /usr/libexec/PlistBuddy \
-    -c 'Set :Entitlements:keychain-access-groups:0 EXPECTED123.com.instanttranslation.macos' \
-    "$PROFILE"
-"$ROOT/scripts/verify-profile-keychain-group.sh" \
-    "$PROFILE" EXPECTED123.com.instanttranslation.macos
+    -c 'Add :keychain-access-groups array' \
+    -c 'Add :keychain-access-groups:0 string EXPECTED123.com.instanttranslation.macos' \
+    "$ENTITLEMENTS_WITH_SHARING"
+assert_fails_with \
+    "signed app must not declare keychain-access-groups" \
+    env PATH="$FAKE_BIN:$PATH" \
+        FAKE_ENTITLEMENTS="$ENTITLEMENTS_WITH_SHARING" \
+        FAKE_TEAM=EXPECTED123 \
+        "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
 
 echo "signing gate regressions passed"
