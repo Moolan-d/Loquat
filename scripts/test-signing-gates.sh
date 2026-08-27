@@ -23,75 +23,70 @@ assert_fails_with() {
     fi
 }
 
-assert_fails_with \
-    "DEVELOPMENT_TEAM" \
-    env -u DEVELOPMENT_TEAM -u CODE_SIGN_IDENTITY "$ROOT/scripts/package-app.sh"
-assert_fails_with \
-    "CODE_SIGN_IDENTITY" \
-    env -u CODE_SIGN_IDENTITY DEVELOPMENT_TEAM=EXPECTED123 "$ROOT/scripts/package-app.sh"
-
-GENERATED_ENTITLEMENTS="$TEMP_ROOT/generated-entitlements.plist"
-"$ROOT/scripts/materialize-entitlements.sh" EXPECTED123 "$GENERATED_ENTITLEMENTS"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$GENERATED_ENTITLEMENTS")" \
-    == "EXPECTED123.com.instanttranslation.macos" ]]
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$GENERATED_ENTITLEMENTS")" \
-    == "EXPECTED123" ]]
-assert_fails_with \
-    "Does Not Exist" \
-    /usr/libexec/PlistBuddy -c 'Print :keychain-access-groups' "$GENERATED_ENTITLEMENTS"
-
-APP="$TEMP_ROOT/Loquat.app"
-mkdir -p "$APP"
-
+BUILD_ROOT="$TEMP_ROOT/build"
+FAKE_RELEASE_BIN="$TEMP_ROOT/bin/release"
 FAKE_BIN="$TEMP_ROOT/bin"
-mkdir -p "$FAKE_BIN"
+mkdir -p "$FAKE_BIN" "$FAKE_RELEASE_BIN"
+
+cat >"$FAKE_BIN/swift" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"--show-bin-path"* ]]; then
+    echo "$FAKE_RELEASE_BIN"
+fi
+SCRIPT
+
 cat >"$FAKE_BIN/codesign" <<'SCRIPT'
 #!/usr/bin/env bash
+set -euo pipefail
 if [[ "$*" == *"--verify"* ]]; then
     exit 0
 fi
-if [[ "$*" == *"--entitlements"* ]]; then
-    cat "$FAKE_ENTITLEMENTS"
-    exit 0
-fi
 if [[ "$*" == *"-dvv"* ]]; then
-    echo "Authority=${FAKE_AUTHORITY:-Developer ID Application: Example}" >&2
-    echo "TeamIdentifier=${FAKE_TEAM:-WRONGTEAM}" >&2
+    echo "Signature=${FAKE_SIGNATURE:-adhoc}" >&2
+    echo "TeamIdentifier=${FAKE_TEAM:-not set}" >&2
     exit 0
 fi
-exit 2
+echo "$*" >>"$CODESIGN_LOG"
 SCRIPT
-chmod +x "$FAKE_BIN/codesign"
+
+chmod +x "$FAKE_BIN/swift" "$FAKE_BIN/codesign"
+printf 'fixture executable\n' >"$FAKE_RELEASE_BIN/InstantTranslation"
+chmod +x "$FAKE_RELEASE_BIN/InstantTranslation"
+
+CODESIGN_LOG="$TEMP_ROOT/codesign.log"
+env \
+    PATH="$FAKE_BIN:$PATH" \
+    FAKE_RELEASE_BIN="$FAKE_RELEASE_BIN" \
+    CODESIGN_LOG="$CODESIGN_LOG" \
+    INSTANT_TRANSLATION_BUILD_ROOT="$BUILD_ROOT" \
+    "$ROOT/scripts/package-app.sh" >/dev/null
+
+[[ -d "$BUILD_ROOT/Loquat.app" ]] || fail "package-app did not build an app bundle"
+[[ "$(cat "$CODESIGN_LOG")" == "--force --deep --sign - $BUILD_ROOT/Loquat.app" ]] \
+    || fail "package-app did not apply a single ad-hoc signature"
+
+APP="$BUILD_ROOT/Loquat.app"
+env PATH="$FAKE_BIN:$PATH" CODESIGN_LOG="$CODESIGN_LOG" \
+    "$ROOT/scripts/verify-adhoc-app.sh" "$APP" >/dev/null
 
 assert_fails_with \
-    "actual signature TeamIdentifier is 'WRONGTEAM'; expected 'EXPECTED123'" \
-    env PATH="$FAKE_BIN:$PATH" FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
-    "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
-
-env PATH="$FAKE_BIN:$PATH" \
-    FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
-    FAKE_TEAM=EXPECTED123 \
-    "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123 >/dev/null
+    "expected an ad-hoc signature" \
+    env PATH="$FAKE_BIN:$PATH" CODESIGN_LOG="$CODESIGN_LOG" \
+        FAKE_SIGNATURE="Developer ID Application: Example" \
+        "$ROOT/scripts/verify-adhoc-app.sh" "$APP"
 
 assert_fails_with \
-    "expected Developer ID Application" \
-    env PATH="$FAKE_BIN:$PATH" \
-        FAKE_ENTITLEMENTS="$GENERATED_ENTITLEMENTS" \
-        FAKE_TEAM=EXPECTED123 \
-        FAKE_AUTHORITY="Apple Development: Example" \
-        "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
+    "expected TeamIdentifier=not set" \
+    env PATH="$FAKE_BIN:$PATH" CODESIGN_LOG="$CODESIGN_LOG" \
+        FAKE_TEAM="TEAMID123" \
+        "$ROOT/scripts/verify-adhoc-app.sh" "$APP"
 
-ENTITLEMENTS_WITH_SHARING="$TEMP_ROOT/entitlements-with-sharing.plist"
-cp "$GENERATED_ENTITLEMENTS" "$ENTITLEMENTS_WITH_SHARING"
-/usr/libexec/PlistBuddy \
-    -c 'Add :keychain-access-groups array' \
-    -c 'Add :keychain-access-groups:0 string EXPECTED123.com.instanttranslation.macos' \
-    "$ENTITLEMENTS_WITH_SHARING"
+MISSING_APP_LOG="$TEMP_ROOT/missing-app-codesign.log"
 assert_fails_with \
-    "signed app must not declare keychain-access-groups" \
-    env PATH="$FAKE_BIN:$PATH" \
-        FAKE_ENTITLEMENTS="$ENTITLEMENTS_WITH_SHARING" \
-        FAKE_TEAM=EXPECTED123 \
-        "$ROOT/scripts/verify-signed-app.sh" "$APP" EXPECTED123
+    "app bundle not found" \
+    env PATH="$FAKE_BIN:$PATH" CODESIGN_LOG="$MISSING_APP_LOG" \
+        "$ROOT/scripts/verify-adhoc-app.sh" "$TEMP_ROOT/does-not-exist.app"
+[[ ! -e "$MISSING_APP_LOG" ]] || fail "missing app still invoked codesign"
 
 echo "signing gate regressions passed"
