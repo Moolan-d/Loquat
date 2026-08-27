@@ -30,6 +30,8 @@ final class StorageTests: XCTestCase {
         XCTAssertNil(preferences.globalShortcut)
         XCTAssertFalse(preferences.translateClipboardOnShortcut)
         XCTAssertEqual(preferences.defaultPromptPresetID, .technologyAndRnD)
+        XCTAssertFalse(preferences.googleCredentialConfigured)
+        XCTAssertFalse(preferences.llmCredentialConfigured)
     }
 
     func testLegacyPreferencesSnapshotKeepsValuesWhenNewFieldsAreAdded() async throws {
@@ -63,6 +65,30 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(preferences.defaultPromptPresetID, .general)
         XCTAssertTrue(preferences.googleProviderEnabled)
         XCTAssertTrue(preferences.llmProviderEnabled)
+        XCTAssertFalse(preferences.googleCredentialConfigured)
+        XCTAssertFalse(preferences.llmCredentialConfigured)
+    }
+
+    func testCredentialPresenceHintsSurviveSaveAndReloadWithoutSecretValues() async throws {
+        let suite = "InstantTranslationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+
+        var preferences = AppPreferences()
+        preferences.googleCredentialConfigured = true
+        preferences.llmCredentialConfigured = true
+        let store = UserDefaultsPreferencesStore(defaults: defaults)
+        try await store.save(preferences)
+
+        let reloaded = await store.load()
+        XCTAssertTrue(reloaded.googleCredentialConfigured)
+        XCTAssertTrue(reloaded.llmCredentialConfigured)
+
+        let persistedDefaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let persisted = try XCTUnwrap(persistedDefaults.data(forKey: "appPreferences"))
+        let text = String(decoding: persisted, as: UTF8.self)
+        XCTAssertFalse(text.contains("api-key"))
+        XCTAssertFalse(text.contains("secret"))
     }
 
     func testProviderVisibilitySurvivesSaveAndReload() async throws {

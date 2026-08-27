@@ -61,6 +61,7 @@ public enum SettingsSaveState: Equatable, Sendable {
 }
 
 public enum CredentialAccessState: Equatable, Sendable {
+    case notLoaded
     case loaded
     case unavailable
 }
@@ -149,12 +150,11 @@ public final class SettingsViewModel {
         session: TranslationSession?
     ) async -> SettingsViewModel {
         let preferences = await preferencesStore.load()
-        let credentials = loadCredentials(from: credentialStore)
         return SettingsViewModel(
             preferences: preferences,
-            googleAPIKey: credentials.googleAPIKey ?? "",
-            llmAPIKey: credentials.llmAPIKey ?? "",
-            credentialAccessState: credentials.state,
+            googleAPIKey: "",
+            llmAPIKey: "",
+            credentialAccessState: .notLoaded,
             actualLaunchAtLogin: launchAtLogin.status.isRegistered,
             preferencesStore: preferencesStore,
             credentialStore: credentialStore,
@@ -296,7 +296,7 @@ public final class SettingsViewModel {
         technologyAndRnDPrompt = DefaultPrompts.technologyAndRnD
     }
 
-    public func reloadCredentials() {
+    public func loadCredentials() {
         let credentials = Self.loadCredentials(from: credentialStore)
         guard credentials.state == .loaded else {
             credentialAccessState = .unavailable
@@ -410,6 +410,8 @@ public final class SettingsViewModel {
             globalShortcut != nil && translateClipboardOnShortcut
         preferences.googleProviderEnabled = googleProviderEnabled
         preferences.llmProviderEnabled = llmProviderEnabled
+        preferences.googleCredentialConfigured = !googleKey.isEmpty
+        preferences.llmCredentialConfigured = !llmKey.isEmpty
         preferences.llmBaseURL = normalizedBaseURL
         preferences.llmModel = model
         preferences.generalPrompt = general

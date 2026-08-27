@@ -324,7 +324,7 @@ struct SettingsViewRegistry {
         let actions = SettingsViewActions(model: model)
         switch id {
         case .reloadCredentials:
-            model.reloadCredentials()
+            model.loadCredentials()
         case .googleTest:
             await actions.testGoogleConnection()
         case .llmTest:

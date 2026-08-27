@@ -78,6 +78,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     }
 
     @objc public func showSettings(_ sender: Any?) {
+        model.loadCredentials()
         if isConstructingSettingsWindow {
             // 构造期间的同步重入只登记一次展示；窗口发布后由外层调用统一完成。
             isSettingsPresentationPending = true

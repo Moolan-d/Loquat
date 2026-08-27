@@ -17,6 +17,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var translateClipboardOnShortcut = false
     public var googleProviderEnabled = true
     public var llmProviderEnabled = true
+    public var googleCredentialConfigured = false
+    public var llmCredentialConfigured = false
     public var llmBaseURL = ""
     public var llmModel = ""
     public var generalPrompt = DefaultPrompts.general
@@ -44,6 +46,14 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         )
         googleProviderEnabled = value(.googleProviderEnabled, defaults.googleProviderEnabled)
         llmProviderEnabled = value(.llmProviderEnabled, defaults.llmProviderEnabled)
+        googleCredentialConfigured = value(
+            .googleCredentialConfigured,
+            defaults.googleCredentialConfigured
+        )
+        llmCredentialConfigured = value(
+            .llmCredentialConfigured,
+            defaults.llmCredentialConfigured
+        )
         llmBaseURL = value(.llmBaseURL, defaults.llmBaseURL)
         llmModel = value(.llmModel, defaults.llmModel)
         generalPrompt = value(.generalPrompt, defaults.generalPrompt)

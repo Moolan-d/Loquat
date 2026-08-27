@@ -59,6 +59,7 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     private var failures: [Failure] = []
     private var readFailures: [CredentialKey: Int] = [:]
     private var recordedOperations: [CredentialOperation] = []
+    private var recordedReadCallCount = 0
 
     init(values: [CredentialKey: String] = [:]) {
         self.values = values
@@ -66,6 +67,7 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
 
     func read(_ key: CredentialKey) throws -> String? {
         try lock.withLock {
+            recordedReadCallCount += 1
             let remaining = readFailures[key] ?? 0
             if remaining > 0 {
                 readFailures[key] = remaining - 1
@@ -111,6 +113,10 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
 
     var operations: [CredentialOperation] {
         lock.withLock { recordedOperations }
+    }
+
+    var readCallCount: Int {
+        lock.withLock { recordedReadCallCount }
     }
 
     func failNext(

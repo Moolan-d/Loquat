@@ -109,7 +109,7 @@ final class SettingsPresentationTests: XCTestCase {
             "Credentials are unavailable. Reload them to edit or save settings."
         )
 
-        model.reloadCredentials()
+        model.loadCredentials()
         policy = SettingsPresentationPolicy(model: model)
 
         XCTAssertTrue(policy.credentialsEditable)
@@ -138,6 +138,7 @@ final class SettingsPresentationTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        savingModel.loadCredentials()
         await preferences.suspendNextLoad()
         let save = Task { try await savingModel.save() }
         await preferences.waitUntilLoadSuspends()
@@ -410,6 +411,7 @@ final class SettingsPresentationTests: XCTestCase {
             providerAvailability: availability,
             session: session
         )
+        model.loadCredentials()
         model.llmBaseURL = "https://api.openai.com/v1"
         model.llmModel = "gpt-4o-mini"
 
@@ -462,6 +464,7 @@ final class SettingsPresentationTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        model.loadCredentials()
         await preferences.suspendNextLoad()
 
         let save = Task { await SettingsViewRegistry(model: model).perform(.save) }
@@ -605,6 +608,41 @@ final class SettingsPresentationTests: XCTestCase {
         originalWindow.orderOut(nil)
     }
 
+    func testPresentingSettingsLoadsCredentialsAfterConstructionDeferredThem() async {
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "stored-google",
+            .llmAPIKey: "stored-llm",
+        ])
+        let model = await SettingsViewModel.make(
+            preferencesStore: MemoryPreferencesStore(),
+            credentialStore: credentials,
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+        let controller = SettingsWindowController(
+            model: model,
+            notificationCenter: NotificationCenter(),
+            activateApplication: {},
+            orderWindowFront: { _, _ in },
+            installApplicationMenu: false,
+            makeWindow: { _ in NSWindow() }
+        )
+
+        XCTAssertEqual(credentials.readCallCount, 0)
+        XCTAssertEqual(model.credentialAccessState, .notLoaded)
+
+        controller.showSettings(nil)
+
+        XCTAssertEqual(credentials.readCallCount, 2)
+        XCTAssertEqual(model.credentialAccessState, .loaded)
+        XCTAssertEqual(model.googleAPIKey, "stored-google")
+        XCTAssertEqual(model.llmAPIKey, "stored-llm")
+    }
+
     func testSettingsWindowIsConstructedOnlyOnFirstPresentation() async {
         var constructionCount = 0
         let controller = SettingsWindowController(
@@ -739,6 +777,7 @@ final class SettingsPresentationTests: XCTestCase {
 
         XCTAssertTrue(application.mainMenu === originalMenu)
         XCTAssertTrue(container.settingsWindowController.model === container.settingsViewModel)
+        container.settingsViewModel.loadCredentials()
         container.settingsViewModel.defaultPromptPresetID = .technologyAndRnD
         container.settingsViewModel.globalShortcut = KeyboardShortcut(
             keyCode: 0,
@@ -781,6 +820,7 @@ final class SettingsPresentationTests: XCTestCase {
             installApplicationMenu: false
         )
         defer { container.stop() }
+        container.settingsViewModel.loadCredentials()
         container.settingsViewModel.globalShortcut = newShortcut
         try await container.settingsViewModel.save()
         await preferences.returnOnce(initialPreferences)
@@ -909,7 +949,7 @@ final class SettingsPresentationTests: XCTestCase {
         connectionTester: any ProviderConnectionTesting = RecordingConnectionTester(),
         shortcutRegistrar: FakeSettingsShortcutRegistrar = FakeSettingsShortcutRegistrar()
     ) async -> SettingsViewModel {
-        await SettingsViewModel.make(
+        let model = await SettingsViewModel.make(
             preferencesStore: MemoryPreferencesStore(),
             credentialStore: credentials,
             launchAtLogin: FakeLaunchAtLoginController(),
@@ -919,6 +959,8 @@ final class SettingsPresentationTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        model.loadCredentials()
+        return model
     }
 
     private func makeRollbackFailureModel() async -> SettingsViewModel {

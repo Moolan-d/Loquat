@@ -6,6 +6,36 @@ import InstantTranslationInfrastructure
 
 @MainActor
 final class SettingsViewModelTests: XCTestCase {
+    func testConstructionDefersCredentialReadsUntilExplicitLoad() async {
+        let credentials = MemoryCredentialStore(values: [
+            .googleAPIKey: "stored-google",
+            .llmAPIKey: "stored-llm",
+        ])
+
+        let model = await SettingsViewModel.make(
+            preferencesStore: MemoryPreferencesStore(),
+            credentialStore: credentials,
+            launchAtLogin: FakeLaunchAtLoginController(),
+            shortcutRegistrar: FakeSettingsShortcutRegistrar(),
+            shortcutAction: {},
+            connectionTester: RecordingConnectionTester(),
+            providerAppearance: ProviderAppearance(llmBrand: .genericAI),
+            session: nil
+        )
+
+        XCTAssertEqual(credentials.readCallCount, 0)
+        XCTAssertEqual(model.credentialAccessState, .notLoaded)
+        XCTAssertEqual(model.googleAPIKey, "")
+        XCTAssertEqual(model.llmAPIKey, "")
+
+        model.loadCredentials()
+
+        XCTAssertEqual(credentials.readCallCount, 2)
+        XCTAssertEqual(model.credentialAccessState, .loaded)
+        XCTAssertEqual(model.googleAPIKey, "stored-google")
+        XCTAssertEqual(model.llmAPIKey, "stored-llm")
+    }
+
     func testCredentialReadFailuresRemainUnavailableAndBlockSaveBeforeMutation() async {
         let failingKeys: [[CredentialKey]] = [
             [.googleAPIKey],
@@ -65,7 +95,7 @@ final class SettingsViewModelTests: XCTestCase {
         let model = await makeModel(credentials: credentials)
         XCTAssertEqual(model.credentialAccessState, .unavailable)
 
-        model.reloadCredentials()
+        model.loadCredentials()
 
         XCTAssertEqual(model.credentialAccessState, .loaded)
         XCTAssertEqual(model.googleAPIKey, "restored-google")
@@ -109,7 +139,7 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertTrue(launch.setValues.isEmpty)
         XCTAssertTrue(shortcut.registerValues.isEmpty)
 
-        model.reloadCredentials()
+        model.loadCredentials()
 
         XCTAssertEqual(model.credentialAccessState, .loaded)
         XCTAssertEqual(model.googleAPIKey, "stored-google")
@@ -131,6 +161,7 @@ final class SettingsViewModelTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        model.loadCredentials()
         model.launchAtLogin = true
         model.globalShortcut = Self.newShortcut
         model.googleAPIKey = "google"
@@ -190,6 +221,7 @@ final class SettingsViewModelTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        model.loadCredentials()
         model.launchAtLogin = true
         model.globalShortcut = Self.newShortcut
         model.googleAPIKey = "new-google"
@@ -281,6 +313,7 @@ final class SettingsViewModelTests: XCTestCase {
             providerAppearance: ProviderAppearance(llmBrand: .genericAI),
             session: nil
         )
+        model.loadCredentials()
         model.googleAPIKey = "google-secret"
         model.llmAPIKey = "llm-secret"
         model.llmBaseURL = "https://api.openai.com/v1"
@@ -291,6 +324,8 @@ final class SettingsViewModelTests: XCTestCase {
         XCTAssertEqual(credentials.stored(.googleAPIKey), "google-secret")
         XCTAssertEqual(credentials.stored(.llmAPIKey), "llm-secret")
         let storedPreferences = await preferences.load()
+        XCTAssertTrue(storedPreferences.googleCredentialConfigured)
+        XCTAssertTrue(storedPreferences.llmCredentialConfigured)
         let encodedPreferences = String(
             data: try JSONEncoder().encode(storedPreferences),
             encoding: .utf8
@@ -817,7 +852,7 @@ final class SettingsViewModelTests: XCTestCase {
         appearance: ProviderAppearance = ProviderAppearance(llmBrand: .genericAI),
         session: TranslationSession? = nil
     ) async -> SettingsViewModel {
-        await SettingsViewModel.make(
+        let model = await SettingsViewModel.make(
             preferencesStore: preferences,
             credentialStore: credentials,
             launchAtLogin: launch,
@@ -827,6 +862,8 @@ final class SettingsViewModelTests: XCTestCase {
             providerAppearance: appearance,
             session: session
         )
+        model.loadCredentials()
+        return model
     }
 
     private struct FailureContext {
