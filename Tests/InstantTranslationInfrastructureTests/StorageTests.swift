@@ -123,7 +123,6 @@ final class StorageTests: XCTestCase {
         let client = TestSecItemClient()
         let store = KeychainCredentialStore(
             service: Self.keychainService,
-            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
             client: client
         )
 
@@ -137,7 +136,6 @@ final class StorageTests: XCTestCase {
         let client = TestSecItemClient()
         let store = KeychainCredentialStore(
             service: Self.keychainService,
-            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
             client: client
         )
         try store.write("secret-value", for: .custom(account))
@@ -162,7 +160,6 @@ final class StorageTests: XCTestCase {
         let client = TestSecItemClient(missingUpdateBarrierCount: 2)
         let store = KeychainCredentialStore(
             service: Self.keychainService,
-            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
             client: client
         )
 
@@ -191,7 +188,6 @@ final class StorageTests: XCTestCase {
         )
         let store = KeychainCredentialStore(
             service: Self.keychainService,
-            backend: .dataProtection(accessGroup: "TESTTEAM.com.instanttranslation.macos"),
             client: client
         )
 
