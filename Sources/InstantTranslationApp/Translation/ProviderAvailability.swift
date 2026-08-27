@@ -68,10 +68,12 @@ public final class ProviderAvailability {
         if googleAPIKey.countsAsConfigured {
             configured.insert(.google)
         }
-        // Base URL 与模型来自偏好而非 Keychain，始终可读，因此仍然按实际值判断。
+        let hasUsableModel = CredentialPresence.of(llmModel) == .present
+            || LLMDefaultModel.resolve(baseURL: llmBaseURL) != nil
+        // Base URL 与模型来自偏好而非 Keychain；模型可显式配置，也可由端点提供运行时兜底。
         if llmAPIKey.countsAsConfigured,
            CredentialPresence.of(llmBaseURL) == .present,
-           CredentialPresence.of(llmModel) == .present {
+           hasUsableModel {
             configured.insert(.llm)
         }
         return configured

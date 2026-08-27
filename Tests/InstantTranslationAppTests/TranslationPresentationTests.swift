@@ -405,6 +405,18 @@ final class TranslationPresentationTests: XCTestCase {
         )
     }
 
+    func testOpenRouterFallbackModelCountsAsConfigured() {
+        XCTAssertEqual(
+            ProviderAvailability.configuredProviderIDs(
+                googleAPIKey: nil,
+                llmAPIKey: "llm-key",
+                llmBaseURL: "https://openrouter.ai/api/v1",
+                llmModel: ""
+            ),
+            [.llm]
+        )
+    }
+
     func testConfiguredProvidersRequireEveryFieldTheProviderNeeds() {
         XCTAssertEqual(
             ProviderAvailability.configuredProviderIDs(
