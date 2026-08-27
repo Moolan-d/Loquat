@@ -1,10 +1,12 @@
 # Instant Translation 发布内存与诊断门禁修订设计
 
-> **历史设计说明：其中 ad-hoc 分发描述已被取代。** 当前发布与钥匙串架构以 `docs/superpowers/specs/2026-08-27-streamlined-keychain-design.md` 为准。
+> **状态：已于 2026-08-27 归档。** Settings 懒构造已经交付；内存/Bundle 扫描、独立诊断程序及其文档方案不再实施。下文只保留为历史设计背景，不构成当前发布要求。
+>
+> 当前发布依据为 `docs/superpowers/specs/2026-08-27-free-adhoc-release-design.md`、`docs/superpowers/plans/2026-08-27-free-adhoc-release.md` 与 `docs/manual-free-release-checklist.md`。
 
-日期：2026-08-13  
-状态：待用户复核  
-适用范围：首版发布验收收尾，不增加用户可见翻译功能
+日期：2026-08-13
+归档日期：2026-08-27
+适用范围：历史记录
 
 ## 1. 背景与结论
 

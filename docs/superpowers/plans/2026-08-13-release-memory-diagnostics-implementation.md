@@ -1,14 +1,24 @@
 # Release Memory and Diagnostics Gates Implementation Plan
 
-> **Historical plan — its ad-hoc release instructions are superseded.** Retain only its memory/diagnostics context; follow `docs/superpowers/specs/2026-08-27-streamlined-keychain-design.md` for the current notarized Developer ID release flow.
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: Archived on 2026-08-27.** Task 1 shipped in `98c8137` and `e69ba81`. Tasks 2–5 are deprecated and will not be implemented. The unchecked steps below are retained only as historical design context; agents must not execute them.
+>
+> Current release sources of truth: `docs/superpowers/specs/2026-08-27-free-adhoc-release-design.md`, `docs/superpowers/plans/2026-08-27-free-adhoc-release.md`, and `docs/manual-free-release-checklist.md`.
 
 **Goal:** Make the 50 MB release gate measure Apple physical footprint, remove eager hidden Settings memory, make release scans fail closed, and provide a deterministic developer-only UI diagnostics executable.
 
 **Architecture:** Keep the production translation popover warm, but make the retained Settings controller construct its single window only on first presentation. Keep release enforcement in small shell helpers with explicit tool/error handling. Add a separate Swift Package executable that composes real app views with in-memory deterministic dependencies and is never copied into the release bundle.
 
 **Tech Stack:** Swift 6.2, SwiftUI, AppKit, XCTest, Swift Package Manager, Bash 3.2-compatible shell, macOS `footprint`, `vmmap`, `file`, `strings`, `nm`, `codesign`, `ditto`, and `shasum`.
+
+## Final Status (2026-08-27)
+
+- **Task 1 — completed.** Lazy, single-instance Settings construction and reentrant-open coalescing are present with App-level tests (`98c8137`, `e69ba81`). The abandoned memory-comparison substep is no longer a release requirement.
+- **Task 2 — deprecated.** The planned memory, bundle, and fixture scanners were disproportionate for the current dependency-free app. The supported lightweight release gates are `verify-adhoc-app.sh`, `test-signing-gates.sh`, `test-packaging-amendment.sh`, ZIP structure checks, and SHA-256 verification. README no longer claims an automated 50 MB/CPU gate.
+- **Task 3 — deprecated.** The standalone diagnostics executable would duplicate deterministic provider, credential, and presentation coverage already maintained in XCTest. Reconsider only in response to recurring failures that cannot be reproduced through existing test seams.
+- **Task 4 — deprecated.** Its diagnostics documentation and manual scenarios depended on Task 3. Current privacy and release behavior remain documented in README and the active release documents.
+- **Task 5 — deprecated.** Its acceptance matrix depended on Tasks 2–4. Use the active free-release plan and manual checklist instead.
+
+The detailed sections below are a historical record, not an active backlog.
 
 ## Global Constraints
 
@@ -17,8 +27,8 @@
 - Preserve the warm translation popover and its under-100 ms manual acceptance target.
 - Keep the memory threshold exactly `51,200 KB`, defined as Apple per-process physical footprint; output RSS only as diagnostic data.
 - Keep idle CPU at or below `0.5%`.
-- Current GitHub Release mode remains exactly `SIGNING_MODE=adhoc`; no paid Apple Developer identity is required.
-- Future `signed` mode continues to fail closed and remains an external verification gate.
+- Current GitHub Release mode is permanently ad-hoc and certificate-free; packaging scripts accept no signing-mode branch.
+- Developer ID, notarization, provisioning profiles, and paid-distribution gates are out of scope.
 - The diagnostics executable must not enter `InstantTranslation.app` or its ZIP and must never use real network, Keychain, pasteboard, or production `UserDefaults`.
 - Security scans fail on missing tools, traversal errors, parse errors, empty executable sets, and search operational errors.
 - Add concise Chinese comments only for non-obvious AppKit lifetime, deterministic fault injection, process ownership, or security fail-closed behavior.
@@ -52,7 +62,7 @@ docs/manual-test-checklist.md            # executable commands for every manual 
 
 ---
 
-### Task 1: Lazily Construct the Retained Settings Window
+### Task 1: Lazily Construct the Retained Settings Window — Completed
 
 **Files:**
 - Modify: `Sources/InstantTranslationApp/Settings/SettingsWindowController.swift`
@@ -62,7 +72,7 @@ docs/manual-test-checklist.md            # executable commands for every manual 
 - Consumes: `SettingsViewModel`, `SettingsView`, `.openInstantTranslationSettings`, and the existing public `SettingsWindowController.init(model:)`.
 - Produces: unchanged public initializer and `showSettings(_:)`; internal `isSettingsWindowConstructed: Bool`; internal injected `makeWindow: @MainActor (SettingsViewModel) -> NSWindow` test seam.
 
-- [ ] **Step 1: Write failing lazy-lifecycle tests**
+- [x] **Step 1: Write failing lazy-lifecycle tests**
 
 Add tests that construct a controller with an injected factory counter and assert construction is deferred:
 
@@ -98,6 +108,8 @@ Add a notification test that posts two open events in the same main-actor turn a
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
+Historical RED output is not recorded in the repository; keep this evidence step open.
+
 Run:
 
 ```bash
@@ -106,7 +118,7 @@ swift test --filter 'SettingsPresentationTests/testSettingsWindowIsConstructedOn
 
 Expected: compile-time RED because the internal factory seam and construction state do not exist, or assertion RED because the current initializer eagerly calls `NSWindow` and `NSHostingView`.
 
-- [ ] **Step 3: Implement the minimal lazy controller**
+- [x] **Step 3: Implement the minimal lazy controller**
 
 Retain the model and factory, initialize the superclass with no window, and install notification/menu routing without constructing UI:
 
@@ -153,6 +165,8 @@ The public production initializer passes this factory. Do not expose injected se
 
 - [ ] **Step 4: Verify GREEN and mutation sensitivity**
 
+The focused tests are currently GREEN, but mutation evidence is not recorded; keep this evidence step open.
+
 Run `swift test --filter SettingsPresentationTests` and expect all focused tests to pass. Temporarily call `makeWindow(model)` from the initializer; rerun the lazy test and observe RED, then restore the lazy implementation and rerun GREEN.
 
 - [ ] **Step 5: Run regression and memory comparison**
@@ -162,12 +176,12 @@ Run:
 ```bash
 swift package clean
 swift test
-SIGNING_MODE=adhoc bash scripts/package-app.sh
+bash scripts/package-app.sh
 ```
 
 Use the existing exact-PID diagnostic procedure to record pre-first-open physical footprint. Do not change the memory script in this task.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/InstantTranslationApp/Settings/SettingsWindowController.swift Tests/InstantTranslationAppTests/SettingsPresentationTests.swift
@@ -176,7 +190,7 @@ git commit -m "perf(settings): lazily construct settings window"
 
 ---
 
-### Task 2: Correct and Harden Release Gates
+### Task 2: Correct and Harden Release Gates — Deprecated
 
 **Files:**
 - Modify: `scripts/measure-memory.sh`
@@ -279,7 +293,7 @@ bash scripts/test-packaging-amendment.sh
 bash scripts/test-release-gates.sh
 bash scripts/verify-bundle.sh
 INSTANT_TRANSLATION_IDLE_SECONDS=5 bash scripts/measure-memory.sh
-SIGNING_MODE=adhoc bash scripts/package-release.sh
+bash scripts/package-release.sh
 (cd build/release && shasum -a 256 -c SHA256SUMS)
 git diff --check
 ```
@@ -295,7 +309,7 @@ git commit -m "fix(release): harden memory and artifact gates"
 
 ---
 
-### Task 3: Add a Developer-Only Diagnostics Executable
+### Task 3: Add a Developer-Only Diagnostics Executable — Deprecated
 
 **Files:**
 - Modify: `Package.swift`
@@ -440,7 +454,7 @@ git commit -m "test(diagnostics): add deterministic manual scenarios"
 
 ---
 
-### Task 4: Connect Public Documentation to Executable Gates
+### Task 4: Connect Public Documentation to Executable Gates — Deprecated
 
 **Files:**
 - Modify: `README.md`
@@ -498,7 +512,7 @@ git commit -m "docs: connect diagnostics to release checklist"
 
 ---
 
-### Task 5: Integrate and Execute the Release Acceptance Matrix
+### Task 5: Integrate and Execute the Release Acceptance Matrix — Deprecated
 
 **Files:**
 - Modify: `.superpowers/sdd/2026-08-12-instant-translation-implementation/progress.md` (ignored ledger only)
@@ -525,7 +539,7 @@ bash scripts/test-packaging-amendment.sh
 bash scripts/test-release-gates.sh
 bash scripts/verify-bundle.sh
 INSTANT_TRANSLATION_IDLE_SECONDS=60 bash scripts/measure-memory.sh
-SIGNING_MODE=adhoc bash scripts/package-release.sh
+bash scripts/package-release.sh
 (cd build/release && shasum -a 256 -c SHA256SUMS)
 git diff --check
 ```
