@@ -1,5 +1,7 @@
 # Streamlined Keychain Implementation Plan
 
+> **Superseded on 2026-08-27.** The project permanently chose certificate-free ad-hoc distribution. Follow `docs/superpowers/specs/2026-08-27-free-adhoc-release-design.md` and `docs/superpowers/plans/2026-08-27-free-adhoc-release.md`; the Data Protection/Developer ID material below is retained only as a historical decision record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace Loquat's dual Keychain runtime with one on-demand Data Protection Keychain flow and a Developer ID notarized release pipeline.

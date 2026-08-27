@@ -1,5 +1,7 @@
 # Streamlined Keychain Design
 
+> **Superseded on 2026-08-27.** The project permanently chose certificate-free ad-hoc distribution. Follow `docs/superpowers/specs/2026-08-27-free-adhoc-release-design.md` and `docs/superpowers/plans/2026-08-27-free-adhoc-release.md`; the Data Protection/Developer ID material below is retained only as a historical decision record.
+
 ## Goal
 
 Replace Loquat's signing-aware, dual-Keychain runtime with one Data Protection Keychain implementation, defer secret reads until user intent requires them, and make the direct-distribution pipeline Developer ID signed and notarized.

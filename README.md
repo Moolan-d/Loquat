@@ -47,9 +47,13 @@
 
 ## Installation
 
-1. Download `Loquat-macOS.zip` from [GitHub Releases](https://github.com/Moolan-d/Loquat/releases).
+1. Download `Loquat-macOS.zip` from [GitHub Releases](https://github.com/Moolan-d/Loquat/releases) and verify `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS`).
 2. Unzip it and drag `Loquat.app` into `/Applications`.
-3. Open Loquat normally. Published releases are Developer ID signed and notarized.
+3. Try Control-click (or right-click) `Loquat.app` → **Open**.
+4. If macOS still blocks it, open **System Settings → Privacy & Security → Open Anyway**.
+5. Only if both UI paths fail, run `xattr -dr com.apple.quarantine /Applications/Loquat.app` as a last resort.
+
+The published release is ad-hoc signed and **not notarized**. These steps let Gatekeeper open this specific downloaded app; they bypass Gatekeeper for it and do not verify notarization. Download the artifact only from GitHub Releases and verify `SHA256SUMS` before bypassing Gatekeeper. Never disable Gatekeeper globally.
 
 ## Usage
 
@@ -80,17 +84,17 @@
 
 ### “Loquat.app” is damaged and can’t be opened
 
-Published releases are notarized and should not require **Open Anyway** or `xattr`. Delete the copy, download the ZIP again from the release page, and verify `SHA256SUMS`. If the warning persists, report the release version and macOS version instead of bypassing Gatekeeper.
+The release is ad-hoc signed and not notarized, so macOS may flag it. First try **Control-click → Open**, then **System Settings → Privacy & Security → Open Anyway**. If both fail, `xattr -dr com.apple.quarantine /Applications/Loquat.app` is the last fallback — it bypasses Gatekeeper for this app and does not verify notarization. Download the ZIP only from GitHub Releases, delete the quarantined copy, and verify `SHA256SUMS` before proceeding.
 
 ### Where are my API keys stored?
 
-In the macOS Data Protection Keychain, under `com.instanttranslation.macos.credentials.v2`. Loquat uses its default app-only group and does not enable Keychain Sharing. Keys are never written to `UserDefaults`, logs, or request URLs.
+In the macOS file-based Keychain, under `com.instanttranslation.macos.credentials.v3`. Keys are never written to `UserDefaults`, logs, or request URLs.
 
-If you used an older release, open Settings and enter each key once. Loquat intentionally does not read or migrate the old file-based Keychain items, so it avoids their legacy authorization prompts. You can remove those old items manually in Keychain Access after confirming the new keys work.
+Older releases used the v1/v2 Keychain services. Loquat never reads, migrates, updates, or deletes those old items, so they keep their previous authorization behavior. Enter each credential once in Settings after installing; you may remove the old items manually in Keychain Access after confirming the new ones work.
 
 ### First-launch authorization prompts
 
-Loquat does not read Keychain at startup. macOS may ask to authorize Keychain access when you open Settings or submit a translation; choose **Allow** or **Always Allow** to store and read your API keys. Loquat does not need Documents access for this workflow.
+Loquat does not read Keychain at startup; prompts, if any, happen only after you open Settings or submit a translation — choose **Allow** or **Always Allow** to store and read your API keys. The legacy macOS Keychain ACL may also ask for access again after you replace the app with a newer ad-hoc build; that is expected and separate from Gatekeeper. Loquat does not need Documents access for this workflow.
 
 ## Development
 
@@ -98,20 +102,14 @@ Loquat does not read Keychain at startup. macOS may ask to authorize Keychain ac
 git clone git@github.com:Moolan-d/Loquat.git
 cd Loquat
 
-swift test                                        # run the test suite
-swift run InstantTranslation                      # run from source
+swift test                                       # run the test suite
+swift run InstantTranslation                     # run from source
 
-DEVELOPMENT_TEAM=TEAMID \
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  bash scripts/package-app.sh                       # build a signed build/Loquat.app
-
-NOTARYTOOL_PROFILE=loquat-notary \
-DEVELOPMENT_TEAM=TEAMID \
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  bash scripts/package-release.sh                   # notarize, staple, and create build/release/Loquat-macOS.zip
+bash scripts/package-app.sh     # build ad-hoc-signed build/Loquat.app
+bash scripts/package-release.sh # build/release/Loquat-macOS.zip + SHA256SUMS
 ```
 
-Create `loquat-notary` once with `xcrun notarytool store-credentials`; the release script passes only its Keychain profile name and never prints notarization credentials. This app uses no restricted capabilities, so Developer ID packaging does not require an embedded provisioning profile.
+No certificate, Team ID, provisioning profile, or notarization credentials are required. `package-release.sh` prints the final ZIP path after verifying its checksum.
 
 ## License
 

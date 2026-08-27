@@ -47,9 +47,13 @@
 
 ## 安装
 
-1. 从 [GitHub Releases](https://github.com/Moolan-d/Loquat/releases) 下载 `Loquat-macOS.zip`。
+1. 从 [GitHub Releases](https://github.com/Moolan-d/Loquat/releases) 下载 `Loquat-macOS.zip`，并校验 `SHA256SUMS`（`shasum -a 256 -c SHA256SUMS`）。
 2. 解压后把 `Loquat.app` 拖入 `/Applications`。
-3. 直接正常打开 Loquat。正式发布包使用 Developer ID 签名并已完成公证。
+3. 先试试 Control-click（或右键）点 `Loquat.app` → **打开**。
+4. 若 macOS 仍拦截，打开 **系统设置 → 隐私与安全性 → 仍要打开**。
+5. 仅当上面两条 UI 路径都失败时，最后再使用 `xattr -dr com.apple.quarantine /Applications/Loquat.app`。
+
+发布包为 ad-hoc 签名、**未经公证**。上述步骤让 Gatekeeper 放行这个特定的已下载应用；它只为该应用绕过 Gatekeeper，并不代表软件已公证。请只从 GitHub Releases 下载，并在绕过 Gatekeeper 前校验 `SHA256SUMS`。切勿全局关闭 Gatekeeper。
 
 ## 使用
 
@@ -80,17 +84,17 @@
 
 ### 「Loquat.app」已损坏、无法打开
 
-正式发布包已经公证，不应需要「仍要打开」或 `xattr`。请删除当前副本，从 Release 页面重新下载 ZIP 并校验 `SHA256SUMS`。若仍出现提示，请反馈 Release 版本和 macOS 版本，而不要绕过 Gatekeeper。
+发布包为 ad-hoc 签名且未公证，macOS 可能提示异常。先尝试 **Control-click → 打开**，再到 **系统设置 → 隐私与安全性 → 仍要打开**。若两者都不行，`xattr -dr com.apple.quarantine /Applications/Loquat.app` 是最后的兜底手段——它只为这个应用绕过 Gatekeeper，不代表已公证。请只从 GitHub Releases 下载 ZIP，删除被隔离的副本并校验 `SHA256SUMS` 后再继续。
 
 ### 我的 API 密钥存在哪里？
 
-存于 macOS Data Protection 钥匙串，服务名 `com.instanttranslation.macos.credentials.v2`。Loquat 使用应用默认、仅自身可访问的 group，不启用 Keychain Sharing；绝不写入 `UserDefaults`、日志或请求 URL。
+存于 macOS file-based 钥匙串，服务名 `com.instanttranslation.macos.credentials.v3`。密钥绝不写入 `UserDefaults`、日志或请求 URL。
 
-若你使用过旧版本，请打开设置并重新输入一次各个密钥。Loquat 不会读取或迁移旧的 file-based 钥匙串项，因此不会触发它们的旧授权弹窗。确认新密钥可用后，可在「钥匙串访问」中手动删除旧项。
+旧版本使用 v1/v2 钥匙串服务。Loquat 不会读取、迁移、更新或删除这些旧项，因此它们保持原有授权行为。安装后请在设置里重新输入一次各密钥；确认新项可用后，可在「钥匙串访问」中手动删除旧项。
 
 ### 首次启动的授权提示
 
-Loquat 启动时不读取钥匙串。打开设置或提交翻译时，macOS 可能请求钥匙串授权；选择「允许」或「始终允许」，应用即可保存和读取 API 密钥。此流程不需要「文稿」访问权限。
+Loquat 启动时不读取钥匙串；提示（如有）只会在打开设置或提交翻译后出现——选择「允许」或「始终允许」即可保存和读取 API 密钥。用更新的 ad-hoc 构建替换应用后，旧版 macOS 钥匙串 ACL 可能再次请求访问；这是预期行为，与 Gatekeeper 无关。此流程不需要「文稿」访问权限。
 
 ## 开发
 
@@ -98,20 +102,14 @@ Loquat 启动时不读取钥匙串。打开设置或提交翻译时，macOS 可�
 git clone git@github.com:Moolan-d/Loquat.git
 cd Loquat
 
-swift test                                          # 运行测试套件
-swift run InstantTranslation                        # 从源码运行
+swift test                                      # 运行测试套件
+swift run InstantTranslation                    # 从源码运行
 
-DEVELOPMENT_TEAM=TEAMID \
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  bash scripts/package-app.sh                        # 构建已签名的 build/Loquat.app
-
-NOTARYTOOL_PROFILE=loquat-notary \
-DEVELOPMENT_TEAM=TEAMID \
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-  bash scripts/package-release.sh                    # 公证、装订票据并生成 build/release/Loquat-macOS.zip
+bash scripts/package-app.sh     # 构建 ad-hoc 签名的 build/Loquat.app
+bash scripts/package-release.sh # 生成 build/release/Loquat-macOS.zip + SHA256SUMS
 ```
 
-使用一次 `xcrun notarytool store-credentials` 创建 `loquat-notary`；脚本只传递其钥匙串 profile 名称，不会输出公证凭据。当前应用没有受限 capability，因此 Developer ID 打包不需要嵌入 provisioning profile。
+无需证书、Team ID、provisioning profile 或公证凭据。`package-release.sh` 校验校验和后会输出最终 ZIP 路径。
 
 ## 许可证
 

@@ -291,11 +291,11 @@ The Prompts section contains editable General and Technology & R&D system prompt
 
 ### 9.4 Storage rules
 
-Google and LLM API keys are stored only in macOS Keychain with the `WhenUnlockedThisDeviceOnly` accessibility class. Base URL, model name, prompts, preset selection, shortcut, and Boolean settings are stored in `UserDefaults`.
+Google and LLM API keys are stored only in the macOS file-based Keychain. Base URL, model name, prompts, preset selection, shortcut, and Boolean settings are stored in `UserDefaults`.
 
-The implementation is a fixed Data Protection Keychain adapter. Every query sets `kSecUseDataProtectionKeychain = true`, omits `kSecAttrAccessGroup`, and uses service `com.instanttranslation.macos.credentials.v2`. The default application-identifier group therefore remains app-only; Keychain Sharing is not enabled. There is no file-based fallback, signing-mode selection, or runtime migration.
+The implementation is one fixed file-based Keychain adapter. Every query uses generic-password items with service `com.instanttranslation.macos.credentials.v3` and the provider-specific account, and omits `kSecUseDataProtectionKeychain`, `kSecAttrAccessGroup`, and `kSecAttrAccessible`. There is no signing-mode selection, no runtime migration, and no fallback backend.
 
-Older file-based items are intentionally not read, modified, or deleted. Existing users re-enter keys once in Settings; after verifying the new entries work, they may delete the old items manually in Keychain Access. Non-sensitive Boolean presence hints live in `UserDefaults` only to render configuration status; requests always read the real matching Keychain item.
+Older v1/v2 Keychain items are intentionally not read, modified, or deleted. Existing users re-enter keys once in Settings; after verifying the new entries work, they may delete the old items manually in Keychain Access. Non-sensitive Boolean presence hints (serialized as `googleCredentialV3Configured` and `llmCredentialV3Configured`) live in `UserDefaults` only to render configuration status; requests always read the real matching Keychain item.
 
 The application never persists:
 
@@ -310,9 +310,9 @@ Application exit clears the current in-memory session.
 
 ### 9.5 Signing and GitHub Release distribution
 
-Release tooling has one direct-distribution path: it requires `DEVELOPMENT_TEAM`, a Developer ID Application `CODE_SIGN_IDENTITY`, and a `NOTARYTOOL_PROFILE` for release packaging. It signs with Hardened Runtime and a secure timestamp, verifies the actual signature authority, Team ID, and app identifiers, creates a pre-notary ZIP, waits for notarization, staples and validates the ticket, assesses the app with Gatekeeper, then emits the final ZIP and `SHA256SUMS`.
+Release tooling has one certificate-free path: `package-app.sh` requires no signing environment, builds the app, and applies one ad-hoc signature (`codesign --force --deep --sign -`). A small verifier confirms the signature is ad-hoc and the Team ID is unset. `package-release.sh` calls `package-app.sh`, creates `Loquat-macOS.zip` with `ditto`, writes and verifies `SHA256SUMS`, and never calls `notarytool`, `stapler`, or `spctl`.
 
-This app has no restricted capabilities, so Developer ID distribution does not need an embedded provisioning profile. The signed entitlement set contains only the application identifier and team identifier, and explicitly rejects Keychain Sharing groups. Published releases are expected to open normally through Gatekeeper; documentation does not instruct users to disable Gatekeeper or use `xattr`.
+The published artifact is ad-hoc signed and not notarized, so Gatekeeper may ask the user to authorize it per install. Documentation leads with Control-click → Open, then Privacy & Security → Open Anyway, and lists `xattr -dr com.apple.quarantine` only as the last fallback; it never recommends disabling Gatekeeper globally.
 
 ## 10. Security, privacy, and permissions
 
@@ -356,7 +356,7 @@ Network integration tests use local stub transports and consume no real API quot
 
 UI tests cover menu-bar opening, immediate focus, outside-click dismissal, direction override, independent copy actions and success feedback, clipboard-on-shortcut behavior, and settings persistence.
 
-Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the fixed Data Protection query shape, v2 service, absent explicit access group, and no fallback or migration. Script tests verify the Developer ID/notarization sequence with fake external tools; a real release additionally validates the signed artifact and notarization result on the release machine.
+Security tests verify that secrets are present only in Keychain and absent from `UserDefaults`, logs, errors, and request URLs. Storage tests assert the fixed file-based v3 query shape, the v3-specific presence serialization, and the absence of Data Protection, access-group, and accessibility attributes. Script tests verify certificate-free ad-hoc packaging and the absence of notarization calls with fake external tools; a real release additionally validates the ad-hoc signature and checksum on the release machine.
 
 ### 12.2 Manual and performance acceptance
 
