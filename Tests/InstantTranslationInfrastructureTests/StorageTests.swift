@@ -89,6 +89,31 @@ final class StorageTests: XCTestCase {
         let text = String(decoding: persisted, as: UTF8.self)
         XCTAssertFalse(text.contains("api-key"))
         XCTAssertFalse(text.contains("secret"))
+        XCTAssertTrue(text.contains("\"googleCredentialV3Configured\":true"))
+        XCTAssertTrue(text.contains("\"llmCredentialV3Configured\":true"))
+        XCTAssertFalse(text.contains("\"googleCredentialConfigured\""))
+        XCTAssertFalse(text.contains("\"llmCredentialConfigured\""))
+    }
+
+    func testPreV3PresenceHintsResetWithoutDiscardingOtherPreferences() throws {
+        let legacy = """
+        {
+          "launchAtLogin": true,
+          "googleCredentialConfigured": true,
+          "llmCredentialConfigured": true,
+          "llmBaseURL": "https://api.openai.com/v1"
+        }
+        """
+
+        let preferences = try JSONDecoder().decode(
+            AppPreferences.self,
+            from: Data(legacy.utf8)
+        )
+
+        XCTAssertTrue(preferences.launchAtLogin)
+        XCTAssertEqual(preferences.llmBaseURL, "https://api.openai.com/v1")
+        XCTAssertFalse(preferences.googleCredentialConfigured)
+        XCTAssertFalse(preferences.llmCredentialConfigured)
     }
 
     func testProviderVisibilitySurvivesSaveAndReload() async throws {
@@ -157,30 +182,6 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(try store.read(.custom(account)), "secret-value")
     }
 
-    func testKeychainWritesUseDataProtectionAccessibility() throws {
-        let account = Self.makeTestAccount()
-        let client = TestSecItemClient()
-        let store = KeychainCredentialStore(
-            service: Self.keychainService,
-            client: client
-        )
-        try store.write("secret-value", for: .custom(account))
-
-        var query = Self.keychainQuery(account: account, useDataProtectionKeychain: true)
-        query[kSecReturnAttributes as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        let result = client.copyMatching(query)
-        XCTAssertEqual(result.status, errSecSuccess)
-        guard result.status == errSecSuccess else { return }
-
-        let attributes = try XCTUnwrap(result.item as? [String: Any])
-        XCTAssertEqual(
-            attributes[kSecAttrAccessible as String] as? String,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
-        )
-    }
-
     func testConcurrentKeychainWritesDoNotThrow() async throws {
         let account = Self.makeTestAccount()
         let client = TestSecItemClient(missingUpdateBarrierCount: 2)
@@ -209,8 +210,7 @@ final class StorageTests: XCTestCase {
         client.insertRawData(
             Data([0xFF]),
             service: Self.keychainService,
-            account: account,
-            useDataProtectionKeychain: true
+            account: account
         )
         let store = KeychainCredentialStore(
             service: Self.keychainService,
@@ -241,36 +241,24 @@ final class StorageTests: XCTestCase {
     }
 
     private static func removeTestCredentials() throws {
-        for usesDataProtectionKeychain in [false, true] {
-            let accounts = try testCredentialAccounts(
-                useDataProtectionKeychain: usesDataProtectionKeychain
+        let accounts = try testCredentialAccounts()
+        for account in accounts {
+            let status = SecItemDelete(
+                keychainQuery(account: account) as CFDictionary
             )
-            for account in accounts {
-                let status = SecItemDelete(
-                    keychainQuery(
-                        account: account,
-                        useDataProtectionKeychain: usesDataProtectionKeychain
-                    ) as CFDictionary
-                )
-                guard status == errSecSuccess || status == errSecItemNotFound else {
-                    throw TestKeychainError.status(status)
-                }
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw TestKeychainError.status(status)
             }
         }
     }
 
-    private static func testCredentialAccounts(
-        useDataProtectionKeychain: Bool
-    ) throws -> [String] {
-        var query: [String: Any] = [
+    private static func testCredentialAccounts() throws -> [String] {
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
-        if useDataProtectionKeychain {
-            query[kSecUseDataProtectionKeychain as String] = true
-        }
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -300,19 +288,12 @@ final class StorageTests: XCTestCase {
         }
     }
 
-    private static func keychainQuery(
-        account: String,
-        useDataProtectionKeychain: Bool
-    ) -> [String: Any] {
-        var query: [String: Any] = [
+    private static func keychainQuery(account: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
         ]
-        if useDataProtectionKeychain {
-            query[kSecUseDataProtectionKeychain as String] = true
-        }
-        return query
     }
 }
 
@@ -325,7 +306,6 @@ private final class TestSecItemClient: KeychainSecItemClient, @unchecked Sendabl
     private struct ItemKey: Hashable {
         let service: String
         let account: String
-        let usesDataProtectionKeychain: Bool
     }
 
     private let condition = NSCondition()
@@ -405,22 +385,16 @@ private final class TestSecItemClient: KeychainSecItemClient, @unchecked Sendabl
     func insertRawData(
         _ data: Data,
         service: String,
-        account: String,
-        useDataProtectionKeychain: Bool
+        account: String
     ) {
         condition.lock()
         defer { condition.unlock() }
 
-        let key = ItemKey(
-            service: service,
-            account: account,
-            usesDataProtectionKeychain: useDataProtectionKeychain
-        )
+        let key = ItemKey(service: service, account: account)
         items[key] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: useDataProtectionKeychain,
             kSecValueData as String: data,
         ]
     }
@@ -431,12 +405,7 @@ private final class TestSecItemClient: KeychainSecItemClient, @unchecked Sendabl
         else {
             return nil
         }
-        return ItemKey(
-            service: service,
-            account: account,
-            usesDataProtectionKeychain:
-                attributes[kSecUseDataProtectionKeychain as String] as? Bool == true
-        )
+        return ItemKey(service: service, account: account)
     }
 
     private func waitForMissingUpdateBarrierIfNeeded() -> Bool {

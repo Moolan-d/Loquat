@@ -4,7 +4,7 @@ import XCTest
 @testable import InstantTranslationInfrastructure
 
 final class CredentialStorageAmendmentTests: XCTestCase {
-    func testEveryOperationUsesThePrivateDataProtectionKeychainNamespace() throws {
+    func testEveryOperationUsesTheSingleFileBasedV3Namespace() throws {
         let client = RecordingSecItemClient()
         let store = KeychainCredentialStore(client: client)
 
@@ -14,48 +14,40 @@ final class CredentialStorageAmendmentTests: XCTestCase {
 
         XCTAssertFalse(client.queries.isEmpty)
         for query in client.queries {
-            XCTAssertEqual(query[kSecUseDataProtectionKeychain as String] as? Bool, true)
-            XCTAssertNil(query[kSecAttrAccessGroup as String])
             XCTAssertEqual(
                 query[kSecAttrService as String] as? String,
-                "com.instanttranslation.macos.credentials.v2"
+                "com.instanttranslation.macos.credentials.v3"
             )
-            XCTAssertEqual(
-                query[kSecAttrAccount as String] as? String,
-                "google-api-key"
-            )
+            XCTAssertEqual(query[kSecAttrAccount as String] as? String, "google-api-key")
+            XCTAssertNil(query[kSecUseDataProtectionKeychain as String])
+            XCTAssertNil(query[kSecAttrAccessGroup as String])
+            XCTAssertNil(query[kSecAttrAccessible as String])
         }
-        XCTAssertEqual(
-            client.addedAttributes.first?[kSecAttrAccessible as String] as? String,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
-        )
     }
 
-    func testCustomServiceStillUsesDataProtectionWithoutAnExplicitAccessGroup() throws {
+    func testCustomServiceDoesNotAddDataProtectionOnlyAttributes() throws {
         let client = RecordingSecItemClient()
         let store = KeychainCredentialStore(service: "test.service", client: client)
 
         try store.write("value", for: .llmAPIKey)
 
         let query = try XCTUnwrap(client.queries.first)
-        XCTAssertEqual(query[kSecUseDataProtectionKeychain as String] as? Bool, true)
-        XCTAssertNil(query[kSecAttrAccessGroup as String])
         XCTAssertEqual(query[kSecAttrService as String] as? String, "test.service")
         XCTAssertEqual(query[kSecAttrAccount as String] as? String, "llm-api-key")
+        XCTAssertNil(query[kSecUseDataProtectionKeychain as String])
+        XCTAssertNil(query[kSecAttrAccessGroup as String])
+        XCTAssertNil(query[kSecAttrAccessible as String])
     }
 
-    func testEntitlementFailureIsReturnedWithoutRetryingAnotherKeychain() {
-        let client = RecordingSecItemClient(copyStatus: errSecMissingEntitlement)
+    func testReadFailureIsReturnedWithoutRetryingAnotherKeychain() {
+        let client = RecordingSecItemClient(copyStatus: errSecAuthFailed)
         let store = KeychainCredentialStore(client: client)
 
         XCTAssertThrowsError(try store.read(.googleAPIKey)) { error in
-            XCTAssertEqual(error as? KeychainError, .status(errSecMissingEntitlement))
+            XCTAssertEqual(error as? KeychainError, .status(errSecAuthFailed))
         }
         XCTAssertEqual(client.queries.count, 1)
-        XCTAssertEqual(
-            client.queries[0][kSecUseDataProtectionKeychain as String] as? Bool,
-            true
-        )
+        XCTAssertNil(client.queries[0][kSecUseDataProtectionKeychain as String])
     }
 }
 

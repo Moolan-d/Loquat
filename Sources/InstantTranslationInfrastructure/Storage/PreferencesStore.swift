@@ -27,6 +27,21 @@ public struct AppPreferences: Codable, Equatable, Sendable {
 
     public init() {}
 
+    private enum CodingKeys: String, CodingKey {
+        case launchAtLogin
+        case globalShortcut
+        case translateClipboardOnShortcut
+        case googleProviderEnabled
+        case llmProviderEnabled
+        case googleCredentialConfigured = "googleCredentialV3Configured"
+        case llmCredentialConfigured = "llmCredentialV3Configured"
+        case llmBaseURL
+        case llmModel
+        case generalPrompt
+        case technologyAndRnDPrompt
+        case defaultPromptPresetID
+    }
+
     // 合成的 Codable 会把缺失键当成错误，于是新增一个字段就让旧快照整体解码失败并被重置为默认值。
     // 逐字段回退到默认值后，旧版本写入的偏好在字段演进后仍然保留。
     public init(from decoder: any Decoder) throws {

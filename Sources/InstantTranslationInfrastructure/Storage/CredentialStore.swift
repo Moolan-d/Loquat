@@ -61,14 +61,14 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
     private let client: any KeychainSecItemClient
 
     public init(
-        service: String = "com.instanttranslation.macos.credentials.v2"
+        service: String = "com.instanttranslation.macos.credentials.v3"
     ) {
         self.service = service
         client = SystemKeychainSecItemClient()
     }
 
     init(
-        service: String = "com.instanttranslation.macos.credentials.v2",
+        service: String = "com.instanttranslation.macos.credentials.v3",
         client: any KeychainSecItemClient
     ) {
         self.service = service
@@ -98,8 +98,6 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
     public func write(_ value: String, for key: CredentialKey) throws {
         let attributes: [String: Any] = [
             kSecValueData as String: Data(value.utf8),
-            // 仅在设备解锁时可访问，且不迁移到其他设备，降低 API 密钥暴露面。
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         let query = baseQuery(key)
         let updateStatus = client.update(query, attributes: attributes)
@@ -139,7 +137,6 @@ public final class KeychainCredentialStore: CredentialStoring, @unchecked Sendab
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.account,
-            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 }
