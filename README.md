@@ -41,7 +41,7 @@
 
 ## Why Loquat
 
-- **Small and native** — pure Swift, no Electron, no WebView: **~1.4 MB** to download, **~3 MB** installed, **≤ 50 MB** idle physical memory and ~0% idle CPU (verified by the release gate).
+- **Small and native** — pure Swift, no Electron, no WebView: **~2.2 MB** to download, **~4 MB** installed, **≤ 50 MB** idle physical memory and ~0% idle CPU (verified by the release gate).
 - **Spends nothing behind your back** — clipboard translation is bound to the shortcut, so unrelated copies never trigger a paid request.
 - **One failure isn't total failure** — one provider's error never invalidates what the other already returned.
 
@@ -60,7 +60,7 @@ The published release is ad-hoc signed and **not notarized**. These steps let Ga
 1. Click the menu-bar icon, right-click → **Settings** (or press `⌘,`).
 2. Add at least one provider:
    - **Google** — paste a Google Cloud Translation API key.
-   - **LLM** — paste an API key, Base URL, and model name (e.g. OpenAI, DeepSeek, OpenRouter).
+   - **LLM** — paste an API key and Base URL. Other OpenAI-compatible endpoints require a model name; OpenRouter may leave it blank to use `openrouter/free`.
 3. Record a global shortcut.
 4. (Optional) enable **Translate Clipboard When Opened by Shortcut** — it appears once a shortcut is set.
 5. Press the shortcut to open the popover, then type, or let the clipboard fill it in.
@@ -92,7 +92,7 @@ In the macOS file-based Keychain, under `com.instanttranslation.macos.credential
 
 Older releases used the v1/v2 Keychain services. Loquat never reads, migrates, updates, or deletes those old items, so they keep their previous authorization behavior. Enter each credential once in Settings after installing; you may remove the old items manually in Keychain Access after confirming the new ones work.
 
-### First-launch authorization prompts
+### Keychain authorization prompts
 
 Loquat does not read Keychain at startup; prompts, if any, happen only after you open Settings or submit a translation — choose **Allow** or **Always Allow** to store and read your API keys. The legacy macOS Keychain ACL may also ask for access again after you replace the app with a newer ad-hoc build; that is expected and separate from Gatekeeper. Loquat does not need Documents access for this workflow.
 

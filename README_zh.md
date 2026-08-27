@@ -41,7 +41,7 @@
 
 ## 为什么是 Loquat
 
-- **小巧原生** — 纯 Swift，无 Electron、无 WebView：下载约 **1.4 MB**，安装后约 **3 MB**，空闲物理内存 ≤ **30 MB**、CPU 接近 0%。
+- **小巧原生** — 纯 Swift，无 Electron、无 WebView：下载约 **2.2 MB**，安装后约 **4 MB**，空闲物理内存 ≤ **50 MB**、CPU 接近 0%（由发布门禁验证）。
 - **不乱花钱** — 剪贴板翻译绑定在快捷键上，无关的复制不会触发付费请求。
 - **不会一错全错** — 一个引擎出错，不影响另一个引擎已经拿到的结果。
 
@@ -60,7 +60,7 @@
 1. 点击菜单栏图标，右键 → **Settings**（或按 `⌘,`）。
 2. 至少配置一个引擎：
    - **Google** — 粘贴 Google Cloud Translation API 密钥。
-   - **LLM** — 粘贴 API 密钥、Base URL 与模型名（如 OpenAI、DeepSeek、OpenRouter）。
+   - **LLM** — 粘贴 API 密钥和 Base URL。其他 OpenAI 兼容端点需填写模型名；OpenRouter 可留空并使用 `openrouter/free`。
 3. 录制一个全局快捷键。
 4. （可选）开启 **Translate Clipboard When Opened by Shortcut**——设置快捷键后该选项才会出现。
 5. 按下快捷键唤出弹窗，输入内容，或让剪贴板自动填入。
@@ -77,7 +77,7 @@
 
 | 操作     | 快捷键                                   |
 | -------- | ---------------------------------------- |
-| 唤出弹窗 | 你的全局快捷键（在设置中录制，backup 键可删除）        |
+| 唤出弹窗 | 你的全局快捷键（在设置中录制，Delete 键可删除）        |
 | 打开设置 | 右键菜单栏图标 → Settings                |
 
 ## 常见问题
@@ -88,11 +88,11 @@
 
 ### 我的 API 密钥存在哪里？
 
-存于 macOS file-based 钥匙串，服务名 `com.instanttranslation.macos.credentials.v3`。密钥绝不写入 `UserDefaults`、日志或请求 URL。
+存于 macOS 文件式钥匙串（file-based Keychain），服务名 `com.instanttranslation.macos.credentials.v3`。密钥绝不写入 `UserDefaults`、日志或请求 URL。
 
 旧版本使用 v1/v2 钥匙串服务。Loquat 不会读取、迁移、更新或删除这些旧项，因此它们保持原有授权行为。安装后请在设置里重新输入一次各密钥；确认新项可用后，可在「钥匙串访问」中手动删除旧项。
 
-### 首次启动的授权提示
+### 钥匙串授权提示
 
 Loquat 启动时不读取钥匙串；提示（如有）只会在打开设置或提交翻译后出现——选择「允许」或「始终允许」即可保存和读取 API 密钥。用更新的 ad-hoc 构建替换应用后，旧版 macOS 钥匙串 ACL 可能再次请求访问；这是预期行为，与 Gatekeeper 无关。此流程不需要「文稿」访问权限。
 
